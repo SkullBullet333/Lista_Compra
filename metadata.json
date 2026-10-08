@@ -1,0 +1,6 @@
+{
+  "name": "Fresh Market - Lista de Compras Inteligente",
+  "description": "Crie e manuseie listas de compras com cálculo automático de totais, controle de carrinho, imagens e categorias.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
