@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { ShoppingCart, Plus, Layers, Sparkles, ArrowLeft, MoreVertical, Plane } from 'lucide-react';
+import { ShoppingCart, Plus, Layers, Sparkles, ArrowLeft, MoreVertical, Plane, Download } from 'lucide-react';
 import { ListType } from '@/types/grocery';
 
 interface NavbarProps {
@@ -14,6 +14,11 @@ interface NavbarProps {
   listType?: ListType;
   onOpenListEdit?: () => void;
   onBackFromList?: () => void;
+}
+
+interface InstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
 }
 
 export function Navbar({
@@ -29,6 +34,7 @@ export function Navbar({
 }: NavbarProps) {
   const isInsideShoppingList = activeTab === 'shopping';
   const [isHomeMenuOpen, setIsHomeMenuOpen] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
   const homeMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -38,6 +44,28 @@ export function Navbar({
     document.addEventListener('mousedown', closeOutside);
     return () => document.removeEventListener('mousedown', closeOutside);
   }, []);
+
+  useEffect(() => {
+    const captureInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as InstallPromptEvent);
+    };
+    const clearInstallPrompt = () => setInstallPrompt(null);
+    window.addEventListener('beforeinstallprompt', captureInstallPrompt);
+    window.addEventListener('appinstalled', clearInstallPrompt);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', captureInstallPrompt);
+      window.removeEventListener('appinstalled', clearInstallPrompt);
+    };
+  }, []);
+
+  const installApp = async () => {
+    if (!installPrompt) return;
+    setIsHomeMenuOpen(false);
+    await installPrompt.prompt();
+    await installPrompt.userChoice;
+    setInstallPrompt(null);
+  };
 
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200">
@@ -155,6 +183,7 @@ export function Navbar({
             {activeTab === 'lists' && <div ref={homeMenuRef} className="relative">
               <button type="button" onClick={() => setIsHomeMenuOpen(open => !open)} aria-label="Mais opções" aria-expanded={isHomeMenuOpen} className="w-9 h-9 rounded-lg text-slate-700 hover:bg-slate-100 flex items-center justify-center"><MoreVertical size={20} /></button>
               {isHomeMenuOpen && <div className="absolute right-0 top-full mt-2 w-44 rounded-xl border border-slate-200 bg-white shadow-lg p-1 z-50">
+                {installPrompt && <button type="button" onClick={installApp} className="w-full rounded-lg px-3 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-slate-50 flex items-center gap-2"><Download size={16} />Instalar aplicativo</button>}
                 <button type="button" onClick={() => { setIsHomeMenuOpen(false); onOpenSettings(); }} className="w-full rounded-lg px-3 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-slate-50">Configurações</button>
               </div>}
             </div>}
