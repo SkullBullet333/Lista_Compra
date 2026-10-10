@@ -133,8 +133,14 @@ export async function backupAppData(lists: ShoppingList[]): Promise<boolean> {
   if (!supabase) return false;
   const user = await requireUser(supabase);
   for (const list of lists.filter(candidate => candidate.accessRole !== 'viewer')) {
+    // A sessão validada pelo Supabase é a fonte de verdade para listas próprias.
+    // O ownerId salvo no navegador pode pertencer a uma sessão anterior. Somente
+    // editores de uma lista compartilhada precisam conservar o dono remoto.
+    const listOwnerId = list.accessRole === 'editor' && list.ownerId
+      ? list.ownerId
+      : user.id;
     const { error: listError } = await supabase.from('shopping_lists').upsert({
-      id: list.id, user_id: list.ownerId || user.id, title: list.title, list_type: list.type || 'market', market_name: list.marketName || null,
+      id: list.id, user_id: listOwnerId, title: list.title, list_type: list.type || 'market', market_name: list.marketName || null,
       destination: list.destination || null, target_budget: list.targetBudget ?? null, color: list.color || null,
       created_at: new Date(list.createdAt).toISOString(), updated_at: new Date(list.updatedAt).toISOString(),
     });
