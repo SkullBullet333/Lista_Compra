@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Check, Trash2, Edit3, Plus, Minus } from 'lucide-react';
+import { Check, Trash2, Edit3, Plus, Minus, TrendingDown, TrendingUp } from 'lucide-react';
 import { GroceryItem } from '@/types/grocery';
 import { formatCurrency } from '@/lib/storage';
 import { ItemImage } from './ItemImage';
@@ -28,6 +28,7 @@ export function ItemRow({
   onOpenImage,
 }: ItemRowProps) {
   const lineTotal = item.quantity * item.price;
+  const priceDifference = item.previousPrice && item.price > 0 ? item.price - item.previousPrice : 0;
 
   // Estado para edição em linha da QUANTIDADE
   const [isEditingQty, setIsEditingQty] = useState(false);
@@ -95,6 +96,7 @@ export function ItemRow({
 
       {/* 2. A foto */}
       <ItemImage
+        key={item.imageUrl || 'no-photo'}
         src={item.imageUrl}
         alt={item.name}
         category={item.category}
@@ -131,6 +133,12 @@ export function ItemRow({
             </>
           )}
         </div>
+        {item.previousPrice !== undefined && item.previousPrice > 0 && item.price > 0 && (
+          <div className={`flex items-center gap-1 mt-0.5 text-[10px] font-bold ${priceDifference > 0 ? 'text-rose-600' : priceDifference < 0 ? 'text-emerald-700' : 'text-slate-400'}`}>
+            {priceDifference > 0 ? <TrendingUp size={11} /> : priceDifference < 0 ? <TrendingDown size={11} /> : null}
+            <span>{priceDifference === 0 ? 'Mesmo preço anterior' : `${priceDifference > 0 ? 'Mais caro' : 'Mais barato'} ${formatCurrency(Math.abs(priceDifference))}`}</span>
+          </div>
+        )}
       </div>
 
       {/* 4. A quantidade (com EDIÇÃO EM LINHA e teclado numérico direto no celular) */}

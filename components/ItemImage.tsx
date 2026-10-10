@@ -2,7 +2,8 @@
 
 import React, { useState } from 'react';
 import { Apple, Croissant, Package, Beef, Milk, Sparkles, Coffee, ShoppingBag } from 'lucide-react';
-import { CategoryId, CATEGORIES } from '@/types/grocery';
+import { CategoryId } from '@/types/grocery';
+import { getAllCategories } from '@/lib/categories';
 
 interface ItemImageProps {
   src?: string;
@@ -57,7 +58,8 @@ export function ItemImage({
     }
   };
 
-  const categoryMeta = CATEGORIES[category] || CATEGORIES.outros;
+  const categories = getAllCategories();
+  const categoryMeta = categories[category] || categories.outros;
 
   // Fallback icon container
   const fallbackNode = (

@@ -1,4 +1,4 @@
-export type CategoryId =
+export type BuiltInCategoryId =
   | 'feira'
   | 'padaria'
   | 'mercearia'
@@ -8,7 +8,23 @@ export type CategoryId =
   | 'bebidas'
   | 'outros';
 
-export type UnitType = 'un' | 'kg' | 'g' | 'L' | 'ml' | 'pct' | 'cx' | 'dz';
+export type CategoryId = BuiltInCategoryId | (string & {});
+
+export type UnitType = string;
+export type ListType = 'market' | 'travel';
+export type TravelEntryType = 'passeio' | 'comida' | 'bebida' | 'transporte' | 'hospedagem' | 'gasto';
+
+export interface TravelEntry {
+  id: string;
+  title: string;
+  date: string; // YYYY-MM-DD, local date
+  time: string; // HH:mm
+  type: TravelEntryType;
+  amount: number;
+  notes?: string;
+  done: boolean;
+  createdAt: number;
+}
 
 export interface Category {
   id: CategoryId;
@@ -20,7 +36,7 @@ export interface Category {
   badgeText: string;
 }
 
-export const CATEGORIES: Record<CategoryId, Category> = {
+export const CATEGORIES: Record<BuiltInCategoryId, Category> = {
   feira: {
     id: 'feira',
     label: 'Feira & Hortifrúti',
@@ -102,21 +118,53 @@ export interface GroceryItem {
   quantity: number;
   unit: UnitType;
   price: number; // Preço unitário em R$
+  previousPrice?: number; // Último preço conhecido antes desta lista
   checked: boolean; // No carrinho
   imageUrl?: string; // Link direto para imagem do HTML
   notes?: string;
   createdAt: number;
 }
 
+export interface ListTemplate {
+  id: string;
+  name: string;
+  description: string;
+  emoji: string;
+  marketName?: string;
+  targetBudget?: number;
+  items: Array<Omit<GroceryItem, 'id' | 'createdAt' | 'checked'>>;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type ThemeMode = 'light' | 'dark' | 'black' | 'system';
+
+export interface ThemePreferences {
+  mode: ThemeMode;
+  primaryColor: string;
+}
+
 export interface ShoppingList {
   id: string;
   title: string;
+  type?: ListType; // Existing lists without a type are market lists.
   marketName?: string;
+  destination?: string;
+  travelEntries?: TravelEntry[];
   targetBudget?: number; // Teto de gastos planejado
   items: GroceryItem[];
   createdAt: number;
   updatedAt: number;
   color?: string;
+  ownerId?: string;
+  accessRole?: 'owner' | 'editor' | 'viewer';
+}
+
+export interface ListCollaborator {
+  userId?: string;
+  email: string;
+  role: 'owner' | 'editor' | 'viewer';
+  status: 'active' | 'pending';
 }
 
 export interface SavedItemConfig {

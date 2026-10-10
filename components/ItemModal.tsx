@@ -1,8 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
-  ArrowLeft,
   X,
   Image as ImageIcon,
   Check,
@@ -19,8 +18,11 @@ import {
   Sparkles as CleanIcon,
   Coffee,
   ShoppingBag,
+  Camera,
+  Upload,
 } from 'lucide-react';
-import { GroceryItem, CategoryId, UnitType, CATEGORIES } from '@/types/grocery';
+import { GroceryItem, CategoryId, UnitType } from '@/types/grocery';
+import { getAllCategories } from '@/lib/categories';
 import { CATALOG_PRESETS } from '@/lib/catalog';
 import { formatCurrency, saveItemConfig, findConfiguredItem } from '@/lib/storage';
 
@@ -31,17 +33,6 @@ interface ItemModalProps {
   initialItem?: GroceryItem | null;
   defaultCategory?: CategoryId;
 }
-
-const UNITS: { id: UnitType; label: string }[] = [
-  { id: 'un', label: 'un (unidade)' },
-  { id: 'kg', label: 'kg (quilo)' },
-  { id: 'g', label: 'g (gramas)' },
-  { id: 'pct', label: 'pct (pacote)' },
-  { id: 'cx', label: 'cx (caixa)' },
-  { id: 'L', label: 'L (litro)' },
-  { id: 'ml', label: 'ml (mililitros)' },
-  { id: 'dz', label: 'dz (dúzia)' },
-];
 
 function getCategoryIcon(cat: CategoryId, size = 16) {
   switch (cat) {
@@ -64,6 +55,41 @@ function getCategoryIcon(cat: CategoryId, size = 16) {
   }
 }
 
+function prepareProductPhoto(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith('image/')) {
+      reject(new Error('Escolha um arquivo de imagem.'));
+      return;
+    }
+
+    const objectUrl = URL.createObjectURL(file);
+    const photo = new window.Image();
+    photo.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      const scale = Math.min(1, 1024 / Math.max(photo.naturalWidth, photo.naturalHeight));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(photo.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(photo.naturalHeight * scale));
+      const context = canvas.getContext('2d');
+      if (!context) {
+        reject(new Error('Não foi possível preparar a foto.'));
+        return;
+      }
+      context.drawImage(photo, 0, 0, canvas.width, canvas.height);
+      try {
+        resolve(canvas.toDataURL('image/jpeg', 0.72));
+      } catch {
+        reject(new Error('Não foi possível salvar a foto.'));
+      }
+    };
+    photo.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('Não foi possível abrir essa imagem.'));
+    };
+    photo.src = objectUrl;
+  });
+}
+
 function ItemModalForm({
   onClose,
   onSave,
@@ -84,12 +110,34 @@ function ItemModalForm({
   );
   const [imageUrl, setImageUrl] = useState<string>(initialItem?.imageUrl || '');
   const [notes, setNotes] = useState<string>(initialItem?.notes || '');
-  const [checked, setChecked] = useState<boolean>(initialItem?.checked || false);
   const [imageError, setImageError] = useState(false);
+  const [photoError, setPhotoError] = useState('');
+  const [isProcessingPhoto, setIsProcessingPhoto] = useState(false);
   const [autoMatchedSource, setAutoMatchedSource] = useState<string | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const categories = React.useMemo(() => getAllCategories(), []);
+  const touchStartY = useRef<number | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
 
   const parsedPrice = parseFloat(price.replace(',', '.')) || 0;
   const totalPrice = quantity * parsedPrice;
+
+  const handlePhotoSelected = async (file?: File) => {
+    if (!file) return;
+    setPhotoError('');
+    setIsProcessingPhoto(true);
+    try {
+      const prepared = await prepareProductPhoto(file);
+      setImageUrl(prepared);
+      setImageError(false);
+    } catch (error) {
+      setPhotoError(error instanceof Error ? error.message : 'Não foi possível carregar a foto.');
+    } finally {
+      setIsProcessingPhoto(false);
+    }
+  };
 
   // Search memory and catalog when typing name
   const handleNameChange = (val: string) => {
@@ -132,10 +180,10 @@ function ItemModalForm({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim() || isProcessingPhoto) return;
 
     const trimmedName = name.trim();
-    const finalUnit = unit;
+    const finalUnit = unit.trim() || 'un';
     const finalCategory = category;
     const finalImage = imageUrl.trim() || undefined;
     const finalNotes = notes.trim() || undefined;
@@ -161,60 +209,36 @@ function ItemModalForm({
       price: parsedPrice,
       imageUrl: finalImage,
       notes: finalNotes,
-      checked,
+      checked: initialItem?.checked ?? false,
     });
     onClose();
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-[#f8fafc] sm:bg-slate-900/60 sm:backdrop-blur-xs sm:items-center sm:justify-center sm:p-4 overflow-hidden animate-fade-in">
+    <div className="fixed inset-0 z-50 flex flex-col justify-end bg-slate-900/50 backdrop-blur-xs sm:items-center sm:justify-center sm:p-4 overflow-hidden animate-fade-in" onClick={onClose}>
       <div
-        className="w-full h-full sm:h-auto sm:max-w-xl sm:rounded-2xl sm:shadow-2xl sm:border sm:border-slate-200 bg-[#f8fafc] flex flex-col sm:max-h-[92vh] overflow-hidden"
+        className={`w-full sm:max-w-xl rounded-t-2xl sm:rounded-2xl shadow-2xl border border-slate-200 bg-[#f8fafc] flex flex-col overflow-hidden transition-[height] duration-300 ease-out ${isExpanded ? 'h-[92dvh] sm:h-[88vh]' : 'h-[42dvh] sm:h-[62vh]'}`}
         onClick={e => e.stopPropagation()}
+        onTouchStart={e => { touchStartY.current = e.touches[0].clientY; }}
+        onTouchEnd={e => {
+          if (touchStartY.current === null) return;
+          const distance = e.changedTouches[0].clientY - touchStartY.current;
+          if (distance < -45) setIsExpanded(true);
+          if (distance > 45 && (formRef.current?.scrollTop ?? 0) === 0) setIsExpanded(false);
+          touchStartY.current = null;
+        }}
       >
-        {/* Header no estilo Página / Topbar com botão Voltar */}
-        <div className="px-4 py-3 sm:px-6 sm:py-3.5 bg-white border-b border-slate-200 flex items-center justify-between gap-3 shrink-0 shadow-2xs">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <button
-              type="button"
-              onClick={onClose}
-              className="w-9 h-9 sm:w-8 sm:h-8 rounded-full text-slate-600 hover:text-slate-900 hover:bg-slate-100 active:bg-slate-200 flex items-center justify-center transition-colors shrink-0"
-              title="Voltar para a lista"
-              aria-label="Voltar para a lista"
-            >
-              <ArrowLeft size={20} strokeWidth={2.5} />
-            </button>
-            <div className="min-w-0">
-              <h1 className="text-base sm:text-lg font-extrabold text-slate-900 truncate">
-                {initialItem ? 'Editar Item' : 'Adicionar Item'}
-              </h1>
-              <p className="text-[11px] text-slate-500 truncate hidden sm:block">
-                {initialItem ? 'Atualize os dados e valores do item' : 'Configure os dados do produto para a lista'}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={onClose}
-              className="hidden sm:flex px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
-            >
-              Cancelar
-            </button>
-            <button
-              type="button"
-              onClick={handleSubmit}
-              className="px-4 py-2 sm:py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-xs font-bold text-white shadow-xs transition-all flex items-center gap-1.5"
-            >
-              <Check size={15} strokeWidth={2.5} />
-              <span>Salvar</span>
-            </button>
-          </div>
-        </div>
-
+        <button
+          type="button"
+          onClick={() => setIsExpanded(value => !value)}
+          className="h-7 bg-white flex items-center justify-center text-slate-500 hover:text-emerald-700 shrink-0"
+          aria-label={isExpanded ? 'Recolher ajustes' : 'Expandir ajustes'}
+          title={isExpanded ? 'Recolher ajustes' : 'Expandir ajustes'}
+        >
+          <span className="w-10 h-1.5 rounded-full bg-slate-300" />
+        </button>
         {/* Form Body - Scrollable */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-3.5 sm:p-5 space-y-3.5">
+        <form ref={formRef} onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-3.5 sm:p-5 space-y-3.5">
           {/* Card: Nome do Item */}
           <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200/90 shadow-2xs space-y-2">
             <div className="flex items-center justify-between">
@@ -233,7 +257,7 @@ function ItemModalForm({
               <input
                 type="text"
                 required
-                autoFocus
+                autoFocus={!initialItem}
                 value={name}
                 onChange={e => handleNameChange(e.target.value)}
                 placeholder="Ex: Arroz Tio João, Banana Prata, Sabão..."
@@ -285,25 +309,12 @@ function ItemModalForm({
           </div>
 
           {/* Card: Quantidade & Unidade */}
-          <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200/90 shadow-2xs">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+          <div className="bg-white p-2.5 sm:p-4 rounded-2xl border border-slate-200/90 shadow-2xs">
+            <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 items-end">
+              <div className="min-w-0">
+                <label className="block text-[11px] sm:text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                   Quantidade
                 </label>
-                <div className="flex items-center border border-slate-300 rounded-xl overflow-hidden focus-within:border-emerald-600 focus-within:ring-2 focus-within:ring-emerald-500/20 bg-white">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setQuantity(prev =>
-                        Math.max(0.1, Number((prev - (unit === 'kg' || unit === 'g' ? 0.2 : 1)).toFixed(2)))
-                      )
-                    }
-                    className="w-12 h-11 flex items-center justify-center text-slate-600 hover:text-slate-900 hover:bg-slate-100 active:bg-slate-200 transition-colors shrink-0"
-                    title="Diminuir quantidade"
-                  >
-                    <Minus size={16} strokeWidth={2.5} />
-                  </button>
                   <input
                     type="number"
                     step="any"
@@ -314,41 +325,43 @@ function ItemModalForm({
                       const val = parseFloat(e.target.value);
                       setQuantity(isNaN(val) ? 0 : val);
                     }}
-                    className="w-full text-center py-2.5 text-slate-900 font-extrabold text-base sm:text-lg focus:outline-none"
+                    className="w-full h-9 sm:h-11 rounded-xl border border-slate-300 text-center text-slate-900 font-extrabold text-base sm:text-lg focus:outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20"
                   />
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setQuantity(prev =>
-                        Number((prev + (unit === 'kg' || unit === 'g' ? 0.2 : 1)).toFixed(2))
-                      )
-                    }
-                    className="w-12 h-11 flex items-center justify-center text-slate-600 hover:text-slate-900 hover:bg-slate-100 active:bg-slate-200 transition-colors shrink-0"
-                    title="Aumentar quantidade"
-                  >
-                    <Plus size={16} strokeWidth={2.5} />
-                  </button>
-                </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Unidade de Medida
+              <div className="min-w-0">
+                <label className="block text-[11px] sm:text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Unidade
                 </label>
-                <select
+                <input
+                  type="text"
                   value={unit}
-                  onChange={e => setUnit(e.target.value as UnitType)}
-                  className="w-full px-3.5 py-2.5 sm:py-3 rounded-xl border border-slate-300 text-slate-900 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 bg-white h-11"
-                >
-                  {UNITS.map(u => (
-                    <option key={u.id} value={u.id}>
-                      {u.label}
-                    </option>
-                  ))}
-                </select>
+                  onChange={e => setUnit(e.target.value)}
+                  maxLength={20}
+                  placeholder="Ex: un, kg"
+                  className="w-full px-2.5 h-9 sm:h-11 rounded-xl border border-slate-300 text-slate-900 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 bg-white"
+                />
+              </div>
+
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setQuantity(prev => Math.max(1, Math.ceil(prev) - 1))}
+                  className="w-8 h-9 sm:w-9 sm:h-11 rounded-xl border border-slate-300 bg-slate-50 text-slate-700 flex items-center justify-center hover:bg-slate-100"
+                  title="Diminuir quantidade"
+                  aria-label="Diminuir quantidade"
+                ><Minus size={16} strokeWidth={2.5} /></button>
+                <button
+                  type="button"
+                  onClick={() => setQuantity(prev => Math.floor(prev) + 1)}
+                  className="w-8 h-9 sm:w-9 sm:h-11 rounded-xl border border-slate-300 bg-slate-50 text-slate-700 flex items-center justify-center hover:bg-slate-100"
+                  title="Aumentar quantidade"
+                  aria-label="Aumentar quantidade"
+                ><Plus size={16} strokeWidth={2.5} /></button>
               </div>
             </div>
           </div>
+          {isExpanded && <div className="space-y-3.5">
 
           {/* Card: Preço Unitário & Subtotal Calculado */}
           <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200/90 shadow-2xs">
@@ -394,13 +407,13 @@ function ItemModalForm({
                 Categoria do Produto
               </label>
               <span className="text-[11px] text-slate-400 font-medium">
-                {CATEGORIES[category]?.label}
+                {categories[category]?.label}
               </span>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {(Object.keys(CATEGORIES) as CategoryId[]).map(catKey => {
-                const cat = CATEGORIES[catKey];
+              {(Object.keys(categories) as CategoryId[]).map(catKey => {
+                const cat = categories[catKey];
                 const isSelected = category === catKey;
                 return (
                   <button
@@ -446,60 +459,47 @@ function ItemModalForm({
               </span>
             </div>
 
-            <div className="flex gap-2">
+            <div className="grid grid-cols-2 gap-2">
               <input
-                type="url"
-                value={imageUrl}
+                ref={cameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                aria-label="Tirar foto com a câmera"
                 onChange={e => {
-                  setImageUrl(e.target.value);
-                  setImageError(false);
+                  void handlePhotoSelected(e.target.files?.[0]);
+                  e.target.value = '';
                 }}
-                placeholder="Cole o link da foto (URL)..."
-                className="flex-1 px-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-300 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600"
               />
-              {imageUrl && (
-                <button
-                  type="button"
-                  onClick={() => setImageUrl('')}
-                  className="px-2.5 text-xs text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-xl font-medium"
-                >
-                  Limpar
-                </button>
-              )}
+              <input
+                ref={galleryInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                aria-label="Escolher foto da galeria"
+                onChange={e => {
+                  void handlePhotoSelected(e.target.files?.[0]);
+                  e.target.value = '';
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => cameraInputRef.current?.click()}
+                className="flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-xs sm:text-sm font-bold text-emerald-900 hover:bg-emerald-100"
+              >
+                <Camera size={17} /> Tirar foto
+              </button>
+              <button
+                type="button"
+                onClick={() => galleryInputRef.current?.click()}
+                className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs sm:text-sm font-bold text-slate-700 hover:bg-slate-50"
+              >
+                <Upload size={17} /> Escolher da galeria
+              </button>
             </div>
-
-            {/* Quick Catalog Photos */}
-            <div className="pt-1">
-              <span className="text-[10px] text-slate-400 font-medium block mb-1">
-                Ou selecione uma foto pronta do catálogo:
-              </span>
-              <div className="flex gap-2 overflow-x-auto py-1 no-scrollbar">
-                {CATALOG_PRESETS.slice(0, 8).map(preset => (
-                  <button
-                    key={preset.name}
-                    type="button"
-                    onClick={() => {
-                      setImageUrl(preset.imageUrl);
-                      setImageError(false);
-                    }}
-                    className={`w-10 h-10 rounded-xl overflow-hidden border shrink-0 transition-all ${
-                      imageUrl === preset.imageUrl
-                        ? 'border-emerald-600 ring-2 ring-emerald-500'
-                        : 'border-slate-200 hover:border-slate-400'
-                    }`}
-                    title={preset.name}
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={preset.imageUrl}
-                      alt={preset.name}
-                      referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover"
-                    />
-                  </button>
-                ))}
-              </div>
-            </div>
+            {photoError && <p role="alert" className="text-xs font-semibold text-rose-600">{photoError}</p>}
+            {isProcessingPhoto && <p role="status" className="text-xs font-semibold text-emerald-700">Preparando foto...</p>}
 
             {/* Live Image Preview */}
             {imageUrl && (
@@ -518,7 +518,7 @@ function ItemModalForm({
                   {imageError ? (
                     <div className="text-rose-600 font-semibold flex items-center gap-1">
                       <AlertCircle size={13} />
-                      <span>URL inacessível (usará ícone da categoria)</span>
+                      <span>Imagem indisponível (usará ícone da categoria)</span>
                     </div>
                   ) : (
                     <div className="text-emerald-800 font-semibold flex items-center gap-1">
@@ -526,7 +526,7 @@ function ItemModalForm({
                       <span>Imagem pronta para exibição</span>
                     </div>
                   )}
-                  <p className="text-[10px] text-slate-500 mt-0.5 truncate">{imageUrl}</p>
+                  <button type="button" onClick={() => { setImageUrl(''); setPhotoError(''); setImageError(false); }} className="text-xs font-semibold text-rose-600 hover:underline mt-1">Remover foto</button>
                 </div>
               </div>
             )}
@@ -545,26 +545,8 @@ function ItemModalForm({
               className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-slate-900 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600"
             />
           </div>
+          </div>}
 
-          {/* Card: Já no Carrinho */}
-          <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200/90 shadow-2xs">
-            <label className="flex items-center gap-3 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={checked}
-                onChange={e => setChecked(e.target.checked)}
-                className="w-5 h-5 rounded-md text-emerald-600 focus:ring-emerald-500 border-slate-300"
-              />
-              <div>
-                <span className="text-xs sm:text-sm font-bold text-slate-800 block">
-                  Já colocar no carrinho (comprado)
-                </span>
-                <span className="text-[11px] text-slate-500 block">
-                  O item entrará marcado na lista somando direto no carrinho
-                </span>
-              </div>
-            </label>
-          </div>
         </form>
 
         {/* Sticky Bottom Actions Bar (Rodapé Fixo) */}
@@ -579,7 +561,8 @@ function ItemModalForm({
           <button
             type="button"
             onClick={handleSubmit}
-            className="flex-1 py-3 px-5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-98 text-white font-extrabold text-sm sm:text-base shadow-md shadow-emerald-700/20 flex items-center justify-center gap-2 transition-all cursor-pointer"
+            disabled={isProcessingPhoto}
+            className="flex-1 py-3 px-5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-wait active:scale-98 text-white font-extrabold text-sm sm:text-base shadow-md shadow-emerald-700/20 flex items-center justify-center gap-2 transition-all cursor-pointer"
           >
             <Check size={18} strokeWidth={2.5} />
             <span>{initialItem ? 'Salvar Alterações' : 'Adicionar à Lista'}</span>

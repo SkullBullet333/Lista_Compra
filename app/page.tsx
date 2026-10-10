@@ -1,16 +1,19 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import type { Session } from '@supabase/supabase-js';
 import { Navbar } from '@/components/Navbar';
 import { ShoppingView } from '@/components/ShoppingView';
+import { TravelView } from '@/components/TravelView';
 import { ListsManager } from '@/components/ListsManager';
 import { StatsView } from '@/components/StatsView';
+import { SettingsView } from '@/components/SettingsView';
 import { ItemModal } from '@/components/ItemModal';
 import { ListEditModal } from '@/components/ListEditModal';
-import { ShareModal } from '@/components/ShareModal';
 import { ImagePreviewModal } from '@/components/ImagePreviewModal';
 import { DeleteConfirmModal } from '@/components/DeleteConfirmModal';
-import { ShoppingList, GroceryItem, CategoryId } from '@/types/grocery';
+import { AuthView } from '@/components/AuthView';
+import { ShoppingList, GroceryItem, CategoryId, ListType } from '@/types/grocery';
 import {
   getStoredLists,
   saveLists,
@@ -18,7 +21,22 @@ import {
   saveActiveListId,
   INITIAL_LISTS,
   saveItemConfig,
+  recordItemPrice,
+  getLatestPrice,
 } from '@/lib/storage';
+import { applyTheme, getThemePreferences } from '@/lib/preferences';
+import {
+  backupAppData,
+  deleteListFromSupabase,
+  getCurrentSession,
+  isSupabaseConfigured,
+  loadListsFromSupabase,
+  onAuthSessionChange,
+  scheduleSupabaseBackup,
+  signOut,
+  subscribeToListChanges,
+} from '@/lib/supabase';
+import { getTemplates } from '@/lib/templates';
 import { CATALOG_PRESETS } from '@/lib/catalog';
 
 const emptySubscribe = () => () => {};
@@ -34,7 +52,12 @@ function useIsMounted() {
 function ShoppingApp() {
   const [lists, setLists] = useState<ShoppingList[]>(() => getStoredLists());
   const [activeListId, setActiveListId] = useState<string>(() => getStoredActiveListId());
-  const [activeTab, setActiveTab] = useState<'shopping' | 'lists' | 'stats'>('shopping');
+  const [activeTab, setActiveTab] = useState<'shopping' | 'lists' | 'stats' | 'settings'>('lists');
+  const [isNewListModalOpen, setIsNewListModalOpen] = useState(false);
+  const [isProductPickerOpen, setIsProductPickerOpen] = useState(false);
+  const [authReady, setAuthReady] = useState(!isSupabaseConfigured());
+  const [session, setSession] = useState<Session | null>(null);
+  const [syncNotice, setSyncNotice] = useState('');
 
   // Modals state
   const [isItemModalOpen, setIsItemModalOpen] = useState(false);
@@ -42,7 +65,6 @@ function ShoppingApp() {
   const [defaultCategoryForNewItem, setDefaultCategoryForNewItem] = useState<CategoryId>('feira');
 
   const [isListEditModalOpen, setIsListEditModalOpen] = useState(false);
-  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [listToDelete, setListToDelete] = useState<ShoppingList | null>(null);
 
   const [previewImage, setPreviewImage] = useState<{
@@ -50,6 +72,61 @@ function ShoppingApp() {
     name: string;
     category: CategoryId;
   } | null>(null);
+
+  useEffect(() => {
+    applyTheme(getThemePreferences());
+    if (!isSupabaseConfigured()) return;
+    getCurrentSession().then(current => { setSession(current); setAuthReady(true); }).catch(() => setAuthReady(true));
+    return onAuthSessionChange(current => { setSession(current); setAuthReady(true); });
+  }, []);
+
+  useEffect(() => {
+    if (!session) return;
+    let active = true;
+    let unsubscribeRealtime = () => {};
+    const applyRemote = async () => {
+      const remote = await loadListsFromSupabase();
+      if (!active || !remote.length) return;
+      setLists(remote);
+      saveLists(remote);
+      if (!remote.some(list => list.id === getStoredActiveListId())) {
+        setActiveListId(remote[0].id);
+        saveActiveListId(remote[0].id);
+      }
+    };
+    const initialize = async () => {
+      try {
+        const remote = await loadListsFromSupabase();
+        if (!active) return;
+        if (remote.length) {
+          setLists(remote);
+          saveLists(remote);
+          setActiveListId(current => remote.some(list => list.id === current) ? current : remote[0].id);
+        } else {
+          const userPrefix = session.user.id;
+          const claimed = getStoredLists().map(list => ({
+            ...list,
+            id: list.ownerId ? list.id : `${userPrefix}-${list.id}`,
+            ownerId: userPrefix,
+            accessRole: 'owner' as const,
+            items: list.items.map(item => ({ ...item, id: list.ownerId ? item.id : `${userPrefix}-${item.id}` })),
+            travelEntries: list.travelEntries?.map(entry => ({ ...entry, id: list.ownerId ? entry.id : `${userPrefix}-${entry.id}` })),
+          }));
+          setLists(claimed);
+          saveLists(claimed);
+          if (claimed.length) { setActiveListId(claimed[0].id); saveActiveListId(claimed[0].id); }
+          await backupAppData(claimed);
+        }
+        unsubscribeRealtime = subscribeToListChanges(() => { void applyRemote(); });
+        setSyncNotice('Sincronização em tempo real ativa.');
+        window.setTimeout(() => setSyncNotice(''), 2200);
+      } catch (error) {
+        setSyncNotice(error instanceof Error ? error.message : 'Não foi possível sincronizar com o Supabase.');
+      }
+    };
+    void initialize();
+    return () => { active = false; unsubscribeRealtime(); };
+  }, [session]);
 
   // SUPORTE AO BOTÃO VOLTAR DO CELULAR E TECLA ESC
   useEffect(() => {
@@ -59,6 +136,14 @@ function ShoppingApp() {
     }
 
     const handlePopState = () => {
+      if (isNewListModalOpen) {
+        setIsNewListModalOpen(false);
+        return;
+      }
+      if (isProductPickerOpen) {
+        setIsProductPickerOpen(false);
+        return;
+      }
       // Prioridade 1: se houver modal ou preview aberto, feche-o primeiro
       if (isItemModalOpen) {
         setIsItemModalOpen(false);
@@ -66,10 +151,6 @@ function ShoppingApp() {
       }
       if (isListEditModalOpen) {
         setIsListEditModalOpen(false);
-        return;
-      }
-      if (isShareModalOpen) {
-        setIsShareModalOpen(false);
         return;
       }
       if (previewImage) {
@@ -82,23 +163,27 @@ function ShoppingApp() {
       }
 
       // Prioridade 2: se estiver visualizando a lista ('shopping') ou estatísticas ('stats'), volta para 'lists'
-      if (activeTab === 'shopping' || activeTab === 'stats') {
+      if (activeTab === 'shopping' || activeTab === 'stats' || activeTab === 'settings') {
         setActiveTab('lists');
       }
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        if (isNewListModalOpen) {
+          setIsNewListModalOpen(false);
+          return;
+        }
+        if (isProductPickerOpen) {
+          setIsProductPickerOpen(false);
+          return;
+        }
         if (isItemModalOpen) {
           setIsItemModalOpen(false);
           return;
         }
         if (isListEditModalOpen) {
           setIsListEditModalOpen(false);
-          return;
-        }
-        if (isShareModalOpen) {
-          setIsShareModalOpen(false);
           return;
         }
         if (previewImage) {
@@ -111,7 +196,7 @@ function ShoppingApp() {
         }
 
         // Se estiver no shopping, tecla ESC volta para a tela de listas
-        if (activeTab === 'shopping' || activeTab === 'stats') {
+        if (activeTab === 'shopping' || activeTab === 'stats' || activeTab === 'settings') {
           setActiveTab('lists');
         }
       }
@@ -126,9 +211,10 @@ function ShoppingApp() {
     };
   }, [
     activeTab,
+    isNewListModalOpen,
+    isProductPickerOpen,
     isItemModalOpen,
     isListEditModalOpen,
-    isShareModalOpen,
     previewImage,
     listToDelete,
   ]);
@@ -137,17 +223,24 @@ function ShoppingApp() {
   const handleUpdateLists = (newLists: ShoppingList[]) => {
     setLists(newLists);
     saveLists(newLists);
+    scheduleSupabaseBackup(newLists);
   };
 
   const activeList = lists.find(l => l.id === activeListId) || lists[0] || INITIAL_LISTS[0];
 
   const handleUpdateActiveList = (updated: ShoppingList) => {
+    if (activeList.accessRole === 'viewer') {
+      setSyncNotice('Esta lista foi compartilhada somente para visualização.');
+      return;
+    }
+    updated.items.forEach(item => recordItemPrice(item, updated));
     const updatedLists = lists.map(l => (l.id === updated.id ? updated : l));
     handleUpdateLists(updatedLists);
   };
 
   // Switch active list (empurra estado para histórico do celular)
   const handleSelectList = (id: string) => {
+    setIsProductPickerOpen(false);
     setActiveListId(id);
     saveActiveListId(id);
     setActiveTab('shopping');
@@ -156,7 +249,8 @@ function ShoppingApp() {
     }
   };
 
-  const handleSelectTab = (tab: 'shopping' | 'lists' | 'stats') => {
+  const handleSelectTab = (tab: 'shopping' | 'lists' | 'stats' | 'settings') => {
+    setIsProductPickerOpen(false);
     setActiveTab(tab);
     if (typeof window !== 'undefined') {
       window.history.pushState({ screen: tab }, '');
@@ -164,15 +258,20 @@ function ShoppingApp() {
   };
 
   // Create new list
-  const handleCreateList = (title: string, marketName?: string, targetBudget?: number) => {
+  const handleCreateList = (title: string, type: ListType = 'market', location?: string, targetBudget?: number) => {
     const newList: ShoppingList = {
-      id: `list-${Date.now()}`,
+      id: `${session?.user.id ? `${session.user.id}-` : ''}list-${Date.now()}`,
       title,
-      marketName,
+      type,
+      marketName: type === 'market' ? location : undefined,
+      destination: type === 'travel' ? location : undefined,
       targetBudget,
       items: [],
+      travelEntries: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
+      ownerId: session?.user.id,
+      accessRole: session ? 'owner' : undefined,
     };
     const updated = [newList, ...lists];
     handleUpdateLists(updated);
@@ -191,14 +290,21 @@ function ShoppingApp() {
 
     const duplicated: ShoppingList = {
       ...target,
-      id: `list-${Date.now()}`,
+      id: `${session?.user.id ? `${session.user.id}-` : ''}list-${Date.now()}`,
       title: `${target.title} (Cópia)`,
+      ownerId: session?.user.id,
+      accessRole: session ? 'owner' : undefined,
       createdAt: Date.now(),
       updatedAt: Date.now(),
       items: target.items.map(i => ({
         ...i,
-        id: `item-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        id: `${session?.user.id ? `${session.user.id}-` : ''}item-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
         checked: false,
+      })),
+      travelEntries: target.travelEntries?.map(entry => ({
+        ...entry,
+        id: `${session?.user.id ? `${session.user.id}-` : ''}trip-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+        done: false,
       })),
     };
 
@@ -214,15 +320,23 @@ function ShoppingApp() {
 
   // EXCLUSÃO DE LISTAS AJUSTADA: funciona com qualquer número de listas sem travar em window.confirm
   const handleDeleteList = (id: string) => {
+    const target = lists.find(list => list.id === id);
+    if (target?.accessRole === 'viewer' || target?.accessRole === 'editor') {
+      setSyncNotice('Somente o proprietário pode excluir uma lista compartilhada.');
+      return;
+    }
     const updated = lists.filter(l => l.id !== id);
     if (updated.length === 0) {
       // Se era a última lista, cria uma nova limpa imediatamente
       const freshList: ShoppingList = {
-        id: `list-${Date.now()}`,
+        id: `${session?.user.id ? `${session.user.id}-` : ''}list-${Date.now()}`,
         title: 'Nova Lista de Compras',
+        type: 'market',
         items: [],
         createdAt: Date.now(),
         updatedAt: Date.now(),
+        ownerId: session?.user.id,
+        accessRole: session ? 'owner' : undefined,
       };
       handleUpdateLists([freshList]);
       setActiveListId(freshList.id);
@@ -236,10 +350,28 @@ function ShoppingApp() {
     }
     // Retorna para a tela de Minhas Listas
     setActiveTab('lists');
+    void deleteListFromSupabase(id).catch(error => setSyncNotice(error instanceof Error ? error.message : 'Não foi possível excluir no servidor.'));
   };
 
   // Load template lists
-  const handleLoadTemplate = (templateType: 'churrasco' | 'feira' | 'basica' | 'cafe') => {
+  const handleLoadTemplate = (templateType: string) => {
+    const storedTemplate = getTemplates().find(template => template.id === templateType);
+    if (storedTemplate) {
+      const now = Date.now();
+      const newList: ShoppingList = {
+        id: `${session?.user.id ? `${session.user.id}-` : ''}list-${now}`, title: storedTemplate.name, type: 'market', marketName: storedTemplate.marketName,
+        targetBudget: storedTemplate.targetBudget,
+        items: storedTemplate.items.map((item, index) => ({ ...item, id: `${session?.user.id ? `${session.user.id}-` : ''}tpl-${now}-${index}`, checked: false, previousPrice: undefined, createdAt: now - index })),
+        createdAt: now, updatedAt: now,
+        ownerId: session?.user.id, accessRole: session ? 'owner' : undefined,
+      };
+      handleUpdateLists([newList, ...lists]);
+      setActiveListId(newList.id);
+      saveActiveListId(newList.id);
+      setActiveTab('shopping');
+      window.history.pushState({ screen: 'shopping', listId: newList.id }, '');
+      return;
+    }
     let title = '';
     let marketName = '';
     let targetBudget = 0;
@@ -323,13 +455,16 @@ function ShoppingApp() {
     }
 
     const newList: ShoppingList = {
-      id: `list-${now}`,
+      id: `${session?.user.id ? `${session.user.id}-` : ''}list-${now}`,
       title,
+      type: 'market',
       marketName,
       targetBudget,
       items: templateItems,
       createdAt: now,
       updatedAt: now,
+      ownerId: session?.user.id,
+      accessRole: session ? 'owner' : undefined,
     };
 
     const updated = [newList, ...lists];
@@ -391,7 +526,8 @@ function ShoppingApp() {
       // Create new
       const newItem: GroceryItem = {
         ...itemData,
-        id: `item-${Date.now()}`,
+        id: `${session?.user.id ? `${session.user.id}-` : ''}item-${Date.now()}`,
+        previousPrice: getLatestPrice(itemData.name, lists, activeList.id),
         createdAt: Date.now(),
       };
       handleUpdateActiveList({
@@ -405,13 +541,14 @@ function ShoppingApp() {
   // Salvar configurações gerais da lista
   const handleSaveListSettings = (
     targetBudget: number | undefined,
-    marketName: string | undefined,
+    location: string | undefined,
     title: string
   ) => {
     handleUpdateActiveList({
       ...activeList,
       targetBudget,
-      marketName,
+      marketName: activeList.type === 'travel' ? activeList.marketName : location,
+      destination: activeList.type === 'travel' ? location : activeList.destination,
       title,
       updatedAt: Date.now(),
     });
@@ -429,15 +566,32 @@ function ShoppingApp() {
     handleUpdateActiveList({ ...activeList, items: updatedItems, updatedAt: Date.now() });
   };
 
+  if (isSupabaseConfigured() && !authReady) return <div className="min-h-screen bg-[#f8fafc] flex items-center justify-center"><div className="w-9 h-9 border-3 border-emerald-600 border-t-transparent rounded-full animate-spin" /></div>;
+  if (isSupabaseConfigured() && !session) return <AuthView />;
+
   return (
     <div className="min-h-screen bg-[#f8fafc] text-[#0f172a] flex flex-col font-sans">
       {/* Top Navbar */}
       <Navbar
         activeTab={activeTab}
         onSelectTab={handleSelectTab}
-        onNewList={() => handleCreateList('Nova Lista de Compras')}
+        onBackFromList={() => {
+          if (isProductPickerOpen) {
+            setIsProductPickerOpen(false);
+            window.history.replaceState({ screen: 'shopping', listId: activeList.id }, '');
+          } else {
+            handleSelectTab('lists');
+          }
+        }}
+        onNewList={() => {
+          setActiveTab('lists');
+          setIsNewListModalOpen(true);
+          window.history.pushState({ modal: 'newList' }, '');
+        }}
+        onOpenSettings={() => handleSelectTab('settings')}
         listTitle={activeList?.title}
-        itemCount={activeList?.items?.length || 0}
+        listType={activeList.type || 'market'}
+        itemCount={activeList.type === 'travel' ? (activeList.travelEntries?.length || 0) : (activeList.items?.length || 0)}
         onOpenListEdit={() => {
           setIsListEditModalOpen(true);
           if (typeof window !== 'undefined') {
@@ -445,21 +599,28 @@ function ShoppingApp() {
           }
         }}
       />
+      {syncNotice && <div role="status" className="fixed top-16 left-1/2 -translate-x-1/2 z-40 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-bold text-emerald-900 shadow-lg">{syncNotice}</div>}
 
       {/* Main Content Area */}
       <main className="flex-1">
-        {activeTab === 'shopping' && (
+        {activeTab === 'shopping' && activeList.type === 'travel' && (
+          <TravelView list={activeList} onUpdateList={handleUpdateActiveList} />
+        )}
+        {activeTab === 'shopping' && activeList.type !== 'travel' && (
           <ShoppingView
             list={activeList}
+            lists={lists}
             onUpdateList={handleUpdateActiveList}
-            onOpenAddItemModal={handleOpenAddItem}
-            onOpenEditItemModal={handleOpenEditItem}
-            onOpenShareModal={() => {
-              setIsShareModalOpen(true);
-              if (typeof window !== 'undefined') {
-                window.history.pushState({ modal: 'share' }, '');
-              }
+            isProductPickerOpen={isProductPickerOpen}
+            onOpenProductPicker={() => {
+              setIsProductPickerOpen(true);
+              window.history.pushState({ screen: 'productPicker', listId: activeList.id }, '');
             }}
+            onCloseProductPicker={() => {
+              setIsProductPickerOpen(false);
+              window.history.replaceState({ screen: 'shopping', listId: activeList.id }, '');
+            }}
+            onOpenEditItemModal={handleOpenEditItem}
             onOpenBudgetModal={() => {
               setIsListEditModalOpen(true);
               if (typeof window !== 'undefined') {
@@ -480,6 +641,8 @@ function ShoppingApp() {
           <ListsManager
             lists={lists}
             activeListId={activeListId}
+            isNewModalOpen={isNewListModalOpen}
+            onCloseNewModal={() => setIsNewListModalOpen(false)}
             onSelectList={handleSelectList}
             onCreateList={handleCreateList}
             onDuplicateList={handleDuplicateList}
@@ -487,6 +650,8 @@ function ShoppingApp() {
             onLoadTemplate={handleLoadTemplate}
           />
         )}
+
+        {activeTab === 'settings' && <SettingsView userEmail={session?.user.email} onSignOut={() => { void signOut(); }} />}
 
         {activeTab === 'stats' && (
           <StatsView
@@ -511,22 +676,12 @@ function ShoppingApp() {
         onClose={() => setIsListEditModalOpen(false)}
         list={activeList}
         onSave={handleSaveListSettings}
-        onShare={() => {
-          setIsListEditModalOpen(false);
-          setIsShareModalOpen(true);
-        }}
-        onUncheckAll={handleUncheckAll}
-        onClearChecked={handleClearChecked}
+        onUncheckAll={activeList.type === 'travel' ? undefined : handleUncheckAll}
+        onClearChecked={activeList.type === 'travel' ? undefined : handleClearChecked}
         onRequestDelete={() => {
           setIsListEditModalOpen(false);
           setListToDelete(activeList);
         }}
-      />
-
-      <ShareModal
-        isOpen={isShareModalOpen}
-        onClose={() => setIsShareModalOpen(false)}
-        list={activeList}
       />
 
       <ImagePreviewModal
@@ -548,7 +703,8 @@ function ShoppingApp() {
           }
         }}
         title={listToDelete?.title || ''}
-        itemCount={listToDelete?.items?.length || 0}
+        itemCount={listToDelete?.type === 'travel' ? (listToDelete.travelEntries?.length || 0) : (listToDelete?.items?.length || 0)}
+        listType={listToDelete?.type || 'market'}
       />
     </div>
   );

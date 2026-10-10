@@ -2,7 +2,8 @@
 
 import React from 'react';
 import { X, ExternalLink } from 'lucide-react';
-import { CategoryId, CATEGORIES } from '@/types/grocery';
+import { CategoryId } from '@/types/grocery';
+import { getAllCategories } from '@/lib/categories';
 
 interface ImagePreviewModalProps {
   isOpen: boolean;
@@ -21,7 +22,9 @@ export function ImagePreviewModal({
 }: ImagePreviewModalProps) {
   if (!isOpen || !imageUrl) return null;
 
-  const categoryMeta = CATEGORIES[category] || CATEGORIES.outros;
+  const categories = getAllCategories();
+  const categoryMeta = categories[category] || categories.outros;
+  const isLocalPhoto = imageUrl.startsWith('data:');
 
   return (
     <div
@@ -61,8 +64,8 @@ export function ImagePreviewModal({
         </div>
 
         <div className="p-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-          <span className="truncate max-w-[280px]">Link direto: {imageUrl}</span>
-          <a
+          <span className="truncate max-w-[280px]">{isLocalPhoto ? 'Foto do produto' : `Link direto: ${imageUrl}`}</span>
+          {!isLocalPhoto && <a
             href={imageUrl}
             target="_blank"
             rel="noopener noreferrer"
@@ -70,7 +73,7 @@ export function ImagePreviewModal({
           >
             <span>Abrir</span>
             <ExternalLink size={12} />
-          </a>
+          </a>}
         </div>
       </div>
     </div>

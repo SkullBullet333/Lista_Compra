@@ -4,6 +4,56 @@ import { CATALOG_PRESETS, guessCategory } from '@/lib/catalog';
 const STORAGE_KEY = 'fresh_market_shopping_lists_v1';
 const ACTIVE_LIST_KEY = 'fresh_market_active_list_id_v1';
 const SAVED_CONFIGS_KEY = 'fresh_market_item_configs_v1';
+const PRICE_HISTORY_KEY = 'fresh_market_price_history_v1';
+
+export interface PriceHistoryEntry {
+  id: string;
+  itemName: string;
+  normalizedName: string;
+  price: number;
+  listId: string;
+  marketName?: string;
+  recordedAt: number;
+}
+
+export function getPriceHistory(): PriceHistoryEntry[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    return JSON.parse(localStorage.getItem(PRICE_HISTORY_KEY) || '[]');
+  } catch {
+    return [];
+  }
+}
+
+export function recordItemPrice(item: GroceryItem, list: ShoppingList): void {
+  if (typeof window === 'undefined' || item.price <= 0) return;
+  const history = getPriceHistory();
+  const latest = history.find(entry => entry.listId === list.id && entry.normalizedName === item.name.trim().toLocaleLowerCase('pt-BR'));
+  if (latest?.price === item.price) return;
+  const entry: PriceHistoryEntry = {
+    id: `price-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    itemName: item.name,
+    normalizedName: item.name.trim().toLocaleLowerCase('pt-BR'),
+    price: item.price,
+    listId: list.id,
+    marketName: list.marketName,
+    recordedAt: Date.now(),
+  };
+  localStorage.setItem(PRICE_HISTORY_KEY, JSON.stringify([entry, ...history].slice(0, 5000)));
+}
+
+export function getLatestPrice(name: string, lists: ShoppingList[], excludeListId?: string): number | undefined {
+  const normalized = name.trim().toLocaleLowerCase('pt-BR');
+  const recorded = getPriceHistory()
+    .filter(entry => entry.normalizedName === normalized && entry.listId !== excludeListId)
+    .sort((a, b) => b.recordedAt - a.recordedAt)[0];
+  if (recorded) return recorded.price;
+  return lists
+    .filter(list => list.id !== excludeListId)
+    .flatMap(list => list.items.map(item => ({ item, date: Math.max(item.createdAt, list.updatedAt) })))
+    .filter(entry => entry.item.name.trim().toLocaleLowerCase('pt-BR') === normalized && entry.item.price > 0)
+    .sort((a, b) => b.date - a.date)[0]?.item.price;
+}
 
 export const INITIAL_LISTS: ShoppingList[] = [
   {
@@ -242,7 +292,9 @@ export function getStoredLists(): ShoppingList[] {
       return INITIAL_LISTS;
     }
     const parsed = JSON.parse(data);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : INITIAL_LISTS;
+    return Array.isArray(parsed) && parsed.length > 0
+      ? parsed.map((list: ShoppingList) => ({ ...list, type: list.type === 'travel' ? 'travel' : 'market', travelEntries: list.travelEntries || [] }))
+      : INITIAL_LISTS;
   } catch {
     return INITIAL_LISTS;
   }
@@ -341,6 +393,13 @@ export function saveItemConfig(config: SavedItemConfig): void {
   }
 }
 
+export function deleteItemConfig(name: string): void {
+  if (typeof window === 'undefined') return;
+  const configs = getSavedItemConfigs();
+  delete configs[name.trim().toLowerCase()];
+  localStorage.setItem(SAVED_CONFIGS_KEY, JSON.stringify(configs));
+}
+
 export interface InferredConfig {
   name: string;
   unit: UnitType;
@@ -436,6 +495,7 @@ export interface RegisteredCandidate {
   imageUrl?: string;
   notes?: string;
   source: 'user_saved' | 'catalog' | 'history';
+  previousPrice?: number;
 }
 
 export function getRegisteredItems(currentLists?: ShoppingList[]): RegisteredCandidate[] {
@@ -493,7 +553,12 @@ export function getRegisteredItems(currentLists?: ShoppingList[]): RegisteredCan
     }
   }
 
-  return Array.from(map.values());
+  const lists = currentLists || [];
+  return Array.from(map.values()).map(item => ({
+    ...item,
+    price: getLatestPrice(item.name, lists) ?? item.price,
+    previousPrice: getLatestPrice(item.name, lists),
+  }));
 }
 
 

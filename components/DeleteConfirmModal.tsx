@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { AlertTriangle, Trash2, X } from 'lucide-react';
+import { ListType } from '@/types/grocery';
 
 interface DeleteConfirmModalProps {
   isOpen: boolean;
@@ -9,6 +10,7 @@ interface DeleteConfirmModalProps {
   onConfirm: () => void;
   title: string;
   itemCount?: number;
+  listType?: ListType;
 }
 
 export function DeleteConfirmModal({
@@ -17,6 +19,7 @@ export function DeleteConfirmModal({
   onConfirm,
   title,
   itemCount = 0,
+  listType = 'market',
 }: DeleteConfirmModalProps) {
   if (!isOpen) return null;
 
@@ -35,16 +38,16 @@ export function DeleteConfirmModal({
           </div>
 
           <h3 className="text-base font-extrabold text-slate-900">
-            Excluir lista de compras?
+            {listType === 'travel' ? 'Excluir viagem?' : 'Excluir lista de compras?'}
           </h3>
 
           <p className="text-xs text-slate-500 mt-1 mb-2">
             Tem certeza que deseja apagar a lista <strong>&quot;{title}&quot;</strong>
-            {itemCount > 0 ? ` com ${itemCount} ${itemCount === 1 ? 'item' : 'itens'}` : ''}?
+            {itemCount > 0 ? ` com ${itemCount} ${listType === 'travel' ? (itemCount === 1 ? 'atividade' : 'atividades') : (itemCount === 1 ? 'item' : 'itens')}` : ''}?
           </p>
 
           <p className="text-[11px] text-rose-600 font-semibold bg-rose-50 p-2 rounded-lg border border-rose-100">
-            Esta ação é irreversível e os itens serão excluídos.
+            Esta ação é irreversível e {listType === 'travel' ? 'as atividades serão excluídas' : 'os itens serão excluídos'}.
           </p>
 
           <div className="grid grid-cols-2 gap-2 mt-4 pt-2 border-t border-slate-100">

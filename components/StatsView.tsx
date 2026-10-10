@@ -2,7 +2,8 @@
 
 import React from 'react';
 import { PieChart, TrendingUp, CheckCircle2, Clock, Wallet, ShoppingBag } from 'lucide-react';
-import { ShoppingList, CATEGORIES, CategoryId } from '@/types/grocery';
+import { ShoppingList, CategoryId } from '@/types/grocery';
+import { getAllCategories } from '@/lib/categories';
 import { calculateListTotals, formatCurrency } from '@/lib/storage';
 
 interface StatsViewProps {
@@ -12,10 +13,11 @@ interface StatsViewProps {
 
 export function StatsView({ list, onSwitchToShopping }: StatsViewProps) {
   const totals = calculateListTotals(list.items);
+  const categories = getAllCategories();
 
   // Group spending by category
-  const categoryBreakdown = (Object.keys(CATEGORIES) as CategoryId[]).map(catKey => {
-    const cat = CATEGORIES[catKey];
+  const categoryBreakdown = (Object.keys(categories) as CategoryId[]).map(catKey => {
+    const cat = categories[catKey];
     const catItems = list.items.filter(i => i.category === catKey);
     const count = catItems.length;
     const total = catItems.reduce((acc, item) => acc + item.quantity * item.price, 0);
