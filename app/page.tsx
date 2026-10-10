@@ -110,14 +110,18 @@ function ShoppingApp() {
             ? migratableLists
             : INITIAL_LISTS;
           const claimed = sourceLists.map(list => {
-            const alreadyOwned = list.ownerId === userPrefix;
+            // A consulta remota confirmou que esta conta ainda não possui listas.
+            // Gere IDs novos mesmo quando o armazenamento local diz que a lista já
+            // pertence ao usuário: um ID antigo pode estar ocupado por um registro
+            // invisível para esta sessão e o RLS bloquearia o upsert.
+            const listId = `${userPrefix}-list-${crypto.randomUUID()}`;
             return ({
             ...list,
-            id: alreadyOwned ? list.id : `${userPrefix}-${list.id}`,
+            id: listId,
             ownerId: userPrefix,
             accessRole: 'owner' as const,
-            items: list.items.map(item => ({ ...item, id: alreadyOwned ? item.id : `${userPrefix}-${item.id}` })),
-            travelEntries: list.travelEntries?.map(entry => ({ ...entry, id: alreadyOwned ? entry.id : `${userPrefix}-${entry.id}` })),
+            items: list.items.map(item => ({ ...item, id: `${userPrefix}-item-${crypto.randomUUID()}` })),
+            travelEntries: list.travelEntries?.map(entry => ({ ...entry, id: `${userPrefix}-travel-${crypto.randomUUID()}` })),
           });
           });
           setLists(claimed);
