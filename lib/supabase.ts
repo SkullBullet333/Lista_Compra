@@ -8,6 +8,23 @@ import { ListCollaborator, ShoppingList } from '@/types/grocery';
 let client: SupabaseClient | null | undefined;
 let backupTimer: ReturnType<typeof setTimeout> | undefined;
 
+type SupabaseFailure = {
+  message?: string;
+  details?: string;
+  hint?: string;
+  code?: string;
+};
+
+function syncError(operation: string, failure: unknown): Error {
+  const value = failure as SupabaseFailure | null;
+  const parts = [value?.message, value?.details, value?.hint, value?.code ? `código ${value.code}` : ''].filter(Boolean);
+  return new Error(`${operation}: ${parts.join(' · ') || 'erro desconhecido do Supabase'}`);
+}
+
+function ensureSyncSucceeded(operation: string, failure: unknown): void {
+  if (failure) throw syncError(operation, failure);
+}
+
 export function isSupabaseConfigured(): boolean {
   return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 }
@@ -121,7 +138,7 @@ export async function backupAppData(lists: ShoppingList[]): Promise<boolean> {
       destination: list.destination || null, target_budget: list.targetBudget ?? null, color: list.color || null,
       created_at: new Date(list.createdAt).toISOString(), updated_at: new Date(list.updatedAt).toISOString(),
     });
-    if (listError) throw listError;
+    ensureSyncSucceeded(`Não foi possível salvar a lista "${list.title}"`, listError);
     const listItems = list.items.map((item, position) => ({
       id: item.id, list_id: list.id, user_id: user.id, name: item.name, normalized_name: item.name.trim().toLocaleLowerCase('pt-BR'),
       category_id: item.category, quantity: item.quantity, unit: item.unit, price: item.price, previous_price: item.previousPrice ?? null,
@@ -130,15 +147,15 @@ export async function backupAppData(lists: ShoppingList[]): Promise<boolean> {
     }));
     if (listItems.length) {
       const { error } = await supabase.from('list_items').upsert(listItems);
-      if (error) throw error;
+      ensureSyncSucceeded(`Não foi possível salvar os itens de "${list.title}"`, error);
     }
     const { data: remoteItems, error: remoteItemsError } = await supabase.from('list_items').select('id').eq('list_id', list.id);
-    if (remoteItemsError) throw remoteItemsError;
+    ensureSyncSucceeded(`Não foi possível conferir os itens de "${list.title}"`, remoteItemsError);
     const itemIds = new Set(listItems.map(item => item.id));
     const staleItems = (remoteItems || []).map(row => row.id as string).filter(id => !itemIds.has(id));
     if (staleItems.length) {
       const { error } = await supabase.from('list_items').delete().in('id', staleItems);
-      if (error) throw error;
+      ensureSyncSucceeded(`Não foi possível remover itens antigos de "${list.title}"`, error);
     }
     const travelEntries = (list.travelEntries || []).map((entry, position) => ({
       id: entry.id, list_id: list.id, user_id: user.id, title: entry.title, entry_date: entry.date, entry_time: entry.time || null,
@@ -147,15 +164,15 @@ export async function backupAppData(lists: ShoppingList[]): Promise<boolean> {
     }));
     if (travelEntries.length) {
       const { error } = await supabase.from('travel_entries').upsert(travelEntries);
-      if (error) throw error;
+      ensureSyncSucceeded(`Não foi possível salvar o roteiro de "${list.title}"`, error);
     }
     const { data: remoteTravel, error: remoteTravelError } = await supabase.from('travel_entries').select('id').eq('list_id', list.id);
-    if (remoteTravelError) throw remoteTravelError;
+    ensureSyncSucceeded(`Não foi possível conferir o roteiro de "${list.title}"`, remoteTravelError);
     const travelIds = new Set(travelEntries.map(entry => entry.id));
     const staleTravel = (remoteTravel || []).map(row => row.id as string).filter(id => !travelIds.has(id));
     if (staleTravel.length) {
       const { error } = await supabase.from('travel_entries').delete().in('id', staleTravel);
-      if (error) throw error;
+      ensureSyncSucceeded(`Não foi possível remover eventos antigos de "${list.title}"`, error);
     }
   }
   const preferences = getThemePreferences();
@@ -163,17 +180,31 @@ export async function backupAppData(lists: ShoppingList[]): Promise<boolean> {
   const items = Object.values(getSavedItemConfigs());
   const templates = getTemplates().filter(template => template.id.startsWith('custom-'));
   const prices = getPriceHistory();
-  if (categories.length) await supabase.from('categories').upsert(categories.map(category => ({ id: `${user.id}:${category.id}`, user_id: user.id, name: category.label, color: category.color, is_system: false })));
-  if (items.length) await supabase.from('catalog_items').upsert(items.map(item => ({ user_id: user.id, name: item.name, normalized_name: item.name.trim().toLocaleLowerCase('pt-BR'), category_id: item.category, default_unit: item.unit, default_price: item.defaultPrice || 0, image_url: item.imageUrl || null, notes: item.notes || null })), { onConflict: 'user_id,normalized_name' });
+  if (categories.length) {
+    const { error } = await supabase.from('categories').upsert(categories.map(category => ({ id: `${user.id}:${category.id}`, user_id: user.id, name: category.label, color: category.color, is_system: false })));
+    ensureSyncSucceeded('Não foi possível salvar as categorias', error);
+  }
+  if (items.length) {
+    const { error } = await supabase.from('catalog_items').upsert(items.map(item => ({ user_id: user.id, name: item.name, normalized_name: item.name.trim().toLocaleLowerCase('pt-BR'), category_id: item.category, default_unit: item.unit, default_price: item.defaultPrice || 0, image_url: item.imageUrl || null, notes: item.notes || null })), { onConflict: 'user_id,normalized_name' });
+    ensureSyncSucceeded('Não foi possível salvar os produtos cadastrados', error);
+  }
   for (const template of templates) {
     const templateId = `${user.id}:${template.id}`;
-    await supabase.from('list_templates').upsert({ id: templateId, user_id: user.id, name: template.name, description: template.description, emoji: template.emoji, market_name: template.marketName || null, target_budget: template.targetBudget ?? null, is_system: false });
-    await supabase.from('template_items').delete().eq('template_id', templateId).eq('user_id', user.id);
-    if (template.items.length) await supabase.from('template_items').insert(template.items.map((item, position) => ({ template_id: templateId, user_id: user.id, name: item.name, category_id: item.category, quantity: item.quantity, unit: item.unit, default_price: item.price, image_url: item.imageUrl || null, notes: item.notes || null, position })));
+    const { error: templateError } = await supabase.from('list_templates').upsert({ id: templateId, user_id: user.id, name: template.name, description: template.description, emoji: template.emoji, market_name: template.marketName || null, target_budget: template.targetBudget ?? null, is_system: false });
+    ensureSyncSucceeded(`Não foi possível salvar o modelo "${template.name}"`, templateError);
+    const { error: deleteTemplateItemsError } = await supabase.from('template_items').delete().eq('template_id', templateId).eq('user_id', user.id);
+    ensureSyncSucceeded(`Não foi possível atualizar os itens do modelo "${template.name}"`, deleteTemplateItemsError);
+    if (template.items.length) {
+      const { error: templateItemsError } = await supabase.from('template_items').insert(template.items.map((item, position) => ({ template_id: templateId, user_id: user.id, name: item.name, category_id: item.category, quantity: item.quantity, unit: item.unit, default_price: item.price, image_url: item.imageUrl || null, notes: item.notes || null, position })));
+      ensureSyncSucceeded(`Não foi possível salvar os itens do modelo "${template.name}"`, templateItemsError);
+    }
   }
-  if (prices.length) await supabase.from('price_history').upsert(prices.map(entry => ({ id: `${user.id}:${entry.id}`, user_id: user.id, list_id: lists.some(list => list.id === entry.listId) ? entry.listId : null, item_name: entry.itemName, normalized_name: entry.normalizedName, unit_price: entry.price, market_name: entry.marketName || null, recorded_at: new Date(entry.recordedAt).toISOString() })));
+  if (prices.length) {
+    const { error } = await supabase.from('price_history').upsert(prices.map(entry => ({ id: `${user.id}:${entry.id}`, user_id: user.id, list_id: lists.some(list => list.id === entry.listId) ? entry.listId : null, item_name: entry.itemName, normalized_name: entry.normalizedName, unit_price: entry.price, market_name: entry.marketName || null, recorded_at: new Date(entry.recordedAt).toISOString() })));
+    ensureSyncSucceeded('Não foi possível salvar o histórico de preços', error);
+  }
   const { error: preferenceError } = await supabase.from('user_preferences').upsert({ user_id: user.id, theme_mode: preferences.mode, primary_color: preferences.primaryColor });
-  if (preferenceError) throw preferenceError;
+  ensureSyncSucceeded('Não foi possível salvar as preferências', preferenceError);
   return true;
 }
 
@@ -187,7 +218,12 @@ export async function deleteListFromSupabase(listId: string): Promise<void> {
 export function scheduleSupabaseBackup(lists: ShoppingList[]): void {
   if (!getSupabaseClient()) return;
   if (backupTimer) clearTimeout(backupTimer);
-  backupTimer = setTimeout(() => { backupAppData(lists).catch(error => console.error('Falha ao sincronizar com o Supabase', error)); }, 450);
+  backupTimer = setTimeout(() => {
+    backupAppData(lists).catch(error => {
+      const failure = error instanceof Error ? error : syncError('Falha ao sincronizar com o Supabase', error);
+      console.error(failure.message);
+    });
+  }, 450);
 }
 
 export function subscribeToListChanges(onChange: () => void): () => void {

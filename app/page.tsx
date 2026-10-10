@@ -104,14 +104,22 @@ function ShoppingApp() {
           setActiveListId(current => remote.some(list => list.id === current) ? current : remote[0].id);
         } else {
           const userPrefix = session.user.id;
-          const claimed = getStoredLists().map(list => ({
+          const storedLists = getStoredLists();
+          const migratableLists = storedLists.filter(list => !list.ownerId || list.ownerId === userPrefix);
+          const sourceLists = migratableLists.length
+            ? migratableLists
+            : INITIAL_LISTS;
+          const claimed = sourceLists.map(list => {
+            const alreadyOwned = list.ownerId === userPrefix;
+            return ({
             ...list,
-            id: list.ownerId ? list.id : `${userPrefix}-${list.id}`,
+            id: alreadyOwned ? list.id : `${userPrefix}-${list.id}`,
             ownerId: userPrefix,
             accessRole: 'owner' as const,
-            items: list.items.map(item => ({ ...item, id: list.ownerId ? item.id : `${userPrefix}-${item.id}` })),
-            travelEntries: list.travelEntries?.map(entry => ({ ...entry, id: list.ownerId ? entry.id : `${userPrefix}-${entry.id}` })),
-          }));
+            items: list.items.map(item => ({ ...item, id: alreadyOwned ? item.id : `${userPrefix}-${item.id}` })),
+            travelEntries: list.travelEntries?.map(entry => ({ ...entry, id: alreadyOwned ? entry.id : `${userPrefix}-${entry.id}` })),
+          });
+          });
           setLists(claimed);
           saveLists(claimed);
           if (claimed.length) { setActiveListId(claimed[0].id); saveActiveListId(claimed[0].id); }
