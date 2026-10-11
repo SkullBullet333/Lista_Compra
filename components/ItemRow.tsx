@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Check, Trash2, Edit3, Plus, Minus, TrendingDown, TrendingUp } from 'lucide-react';
 import { GroceryItem } from '@/types/grocery';
 import { formatCurrency } from '@/lib/storage';
@@ -39,6 +39,27 @@ export function ItemRow({
   const [priceInput, setPriceInput] = useState(() =>
     item.price > 0 ? item.price.toFixed(2).replace('.', ',') : '0,00'
   );
+  const [swipeOffset, setSwipeOffset] = useState(0);
+  const swipeStart = useRef<{ x: number; y: number; offset: number } | null>(null);
+
+  const handleTouchStart = (event: React.TouchEvent) => {
+    const touch = event.touches[0];
+    swipeStart.current = { x: touch.clientX, y: touch.clientY, offset: swipeOffset };
+  };
+
+  const handleTouchMove = (event: React.TouchEvent) => {
+    if (!swipeStart.current) return;
+    const touch = event.touches[0];
+    const deltaX = touch.clientX - swipeStart.current.x;
+    const deltaY = touch.clientY - swipeStart.current.y;
+    if (Math.abs(deltaY) > Math.abs(deltaX)) return;
+    setSwipeOffset(Math.max(-76, Math.min(0, swipeStart.current.offset + deltaX)));
+  };
+
+  const handleTouchEnd = () => {
+    setSwipeOffset(current => current <= -38 ? -76 : 0);
+    swipeStart.current = null;
+  };
 
   const handleStepDelta = (delta: number) => {
     const step = item.unit === 'kg' || item.unit === 'g' || item.unit === 'L' ? 0.2 : 1;
@@ -68,13 +89,27 @@ export function ItemRow({
   };
 
   return (
-    <div
-      className={`group relative flex items-center gap-2 sm:gap-3 p-2 sm:p-3 sm:px-4 rounded-xl border transition-all duration-150 ${
+    <div className="relative overflow-hidden rounded-xl">
+      <button
+        type="button"
+        onClick={() => { setSwipeOffset(0); onDelete(item.id); }}
+        className="absolute inset-y-0 right-0 flex w-[76px] items-center justify-center gap-1 bg-rose-600 text-xs font-bold text-white sm:hidden"
+        aria-label={`Excluir ${item.name}`}
+      >
+        <Trash2 size={15} />
+        <span>Excluir</span>
+      </button>
+      <div
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        style={{ transform: `translateX(${swipeOffset}px)`, touchAction: 'pan-y' }}
+        className={`group relative flex items-center gap-2 sm:gap-3 p-2 sm:p-3 sm:px-4 rounded-xl border transition-[transform,background-color,border-color,opacity] duration-150 ${
         item.checked
           ? 'bg-slate-50/70 border-slate-200/60 opacity-80'
           : 'bg-white border-slate-200/90 hover:border-slate-300 shadow-xs'
-      }`}
-    >
+        }`}
+      >
       {/* 1. Caixa de seleção */}
       <button
         type="button"
@@ -257,12 +292,12 @@ export function ItemRow({
         )}
       </div>
 
-      {/* Exclusão sempre disponível; edição adicional no desktop */}
-      <div className="flex items-center gap-0.5 shrink-0 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+      {/* Ações adicionais no desktop; no celular, arraste para a esquerda. */}
+      <div className="hidden sm:flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
         <button
           type="button"
           onClick={() => onEdit(item)}
-          className="hidden sm:flex w-7 h-7 items-center justify-center rounded-lg text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 transition-colors"
+          className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 transition-colors"
           title="Editar item"
         >
           <Edit3 size={14} />
@@ -275,6 +310,7 @@ export function ItemRow({
         >
           <Trash2 size={14} />
         </button>
+      </div>
       </div>
     </div>
   );
