@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Plus,
   CheckCheck,
@@ -8,6 +8,7 @@ import {
   Layers,
   ListFilter,
   ShoppingBag,
+  Trash2,
 } from 'lucide-react';
 import { ShoppingList, GroceryItem, CategoryId } from '@/types/grocery';
 import { getAllCategories } from '@/lib/categories';
@@ -41,6 +42,9 @@ export function ShoppingView({
   const [selectedCategory, setSelectedCategory] = useState<CategoryId | 'all'>('all');
   const [showCategoryListModal, setShowCategoryListModal] = useState(false);
   const [viewMode, setViewMode] = useState<'categories' | 'status'>('categories');
+  const [itemToDelete, setItemToDelete] = useState<GroceryItem | null>(null);
+  const [deletedItem, setDeletedItem] = useState<{ item: GroceryItem; index: number } | null>(null);
+  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const categories = useMemo(() => getAllCategories(), []);
   const totals = useMemo(() => calculateListTotals(list.items), [list.items]);
 
@@ -86,10 +90,36 @@ export function ShoppingView({
     onUpdateList({ ...list, items: updated, updatedAt: Date.now() });
   };
 
-  // Delete item
+  useEffect(() => () => {
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+  }, []);
+
+  // Solicita confirmação antes de excluir o item.
   const handleDeleteItem = (id: string) => {
-    const updated = list.items.filter(item => item.id !== id);
+    const item = list.items.find(candidate => candidate.id === id);
+    if (item) setItemToDelete(item);
+  };
+
+  const confirmDeleteItem = () => {
+    if (!itemToDelete) return;
+    const index = list.items.findIndex(item => item.id === itemToDelete.id);
+    const removed = itemToDelete;
+    const updated = list.items.filter(item => item.id !== removed.id);
     onUpdateList({ ...list, items: updated, updatedAt: Date.now() });
+    setItemToDelete(null);
+    setDeletedItem({ item: removed, index: Math.max(index, 0) });
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    undoTimer.current = setTimeout(() => setDeletedItem(null), 7000);
+  };
+
+  const undoDeleteItem = () => {
+    if (!deletedItem) return;
+    const restored = [...list.items];
+    restored.splice(Math.min(deletedItem.index, restored.length), 0, deletedItem.item);
+    onUpdateList({ ...list, items: restored, updatedAt: Date.now() });
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    undoTimer.current = null;
+    setDeletedItem(null);
   };
 
   // Clear all checked items
@@ -441,6 +471,23 @@ export function ShoppingView({
         <Plus size={20} strokeWidth={2.8} />
         <span>Adicionar</span>
       </button>
+
+      {itemToDelete && <div className="fixed inset-0 z-60 bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setItemToDelete(null)}>
+        <div role="alertdialog" aria-modal="true" aria-labelledby="delete-market-item-title" className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl" onClick={event => event.stopPropagation()}>
+          <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-rose-100 text-rose-700"><Trash2 size={21} /></div>
+          <h2 id="delete-market-item-title" className="text-center text-base font-extrabold text-slate-900">Excluir item?</h2>
+          <p className="mt-1 text-center text-sm text-slate-500">“{itemToDelete.name}” será removido da lista.</p>
+          <div className="mt-5 grid grid-cols-2 gap-2">
+            <button type="button" onClick={() => setItemToDelete(null)} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold text-slate-700">Cancelar</button>
+            <button type="button" onClick={confirmDeleteItem} className="rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-rose-700">Excluir</button>
+          </div>
+        </div>
+      </div>}
+
+      {deletedItem && <div role="status" className="fixed bottom-20 left-1/2 z-70 flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 items-center gap-3 rounded-xl bg-slate-900 px-4 py-3 text-sm text-white shadow-2xl">
+        <span className="min-w-0 flex-1 truncate">“{deletedItem.item.name}” foi excluído.</span>
+        <button type="button" onClick={undoDeleteItem} className="shrink-0 font-extrabold text-emerald-300 hover:text-emerald-200">Desfazer</button>
+      </div>}
 
       {/* Sticky Financial Dock (Dock inferior) */}
       <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/90 shadow-[0_-4px_16px_-2px_rgba(15,23,42,0.06),0_-2px_6px_-1px_rgba(15,23,42,0.03)]">

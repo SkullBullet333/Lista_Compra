@@ -257,12 +257,12 @@ export function ItemRow({
         )}
       </div>
 
-      {/* Botões de Ação Extras apenas no desktop */}
-      <div className="hidden sm:flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+      {/* Exclusão sempre disponível; edição adicional no desktop */}
+      <div className="flex items-center gap-0.5 shrink-0 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
         <button
           type="button"
           onClick={() => onEdit(item)}
-          className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 transition-colors"
+          className="hidden sm:flex w-7 h-7 items-center justify-center rounded-lg text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 transition-colors"
           title="Editar item"
         >
           <Edit3 size={14} />
