@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarDays, Check, Clock3, MapPin, Pencil, Plus, Trash2, Wallet, X } from 'lucide-react';
 import { ShoppingList, TravelEntry, TravelEntryType } from '@/types/grocery';
 import { formatCurrency } from '@/lib/storage';
@@ -50,6 +50,9 @@ export function TravelView({ list, onUpdateList }: TravelViewProps) {
   const [amount, setAmount] = useState('');
   const [notes, setNotes] = useState('');
   const [paymentFilter, setPaymentFilter] = useState<'unpaid' | 'paid'>('unpaid');
+  const [entryToDelete, setEntryToDelete] = useState<TravelEntry | null>(null);
+  const [deletedEntry, setDeletedEntry] = useState<{ entry: TravelEntry; index: number } | null>(null);
+  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const groups = useMemo(() => {
     const visible = entries.filter(entry => paymentFilter === 'paid' ? entry.done : !entry.done);
@@ -114,6 +117,31 @@ export function TravelView({ list, onUpdateList }: TravelViewProps) {
     onUpdateList(withTravelEntries(list, updater(entries)));
   };
 
+  useEffect(() => () => {
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+  }, []);
+
+  const confirmDeleteEntry = () => {
+    if (!entryToDelete) return;
+    const index = entries.findIndex(entry => entry.id === entryToDelete.id);
+    const removed = entryToDelete;
+    updateEntry(removed.id, items => items.filter(item => item.id !== removed.id));
+    setEntryToDelete(null);
+    setDeletedEntry({ entry: removed, index: Math.max(index, 0) });
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    undoTimer.current = setTimeout(() => setDeletedEntry(null), 7000);
+  };
+
+  const undoDeleteEntry = () => {
+    if (!deletedEntry) return;
+    const restored = [...entries];
+    restored.splice(Math.min(deletedEntry.index, restored.length), 0, deletedEntry.entry);
+    onUpdateList(withTravelEntries(list, restored));
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    undoTimer.current = null;
+    setDeletedEntry(null);
+  };
+
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-5 pb-28">
       <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
@@ -153,7 +181,7 @@ export function TravelView({ list, onUpdateList }: TravelViewProps) {
                 <button type="button" onClick={() => updateEntry(entry.id, items => items.map(item => item.id === entry.id ? { ...item, done: !item.done, paid: !item.done } : item))} aria-label={entry.done ? `Marcar ${entry.title} como não pago` : `Marcar ${entry.title} como pago`} className={`w-7 h-7 rounded-full border flex items-center justify-center shrink-0 ${entry.done ? 'bg-sky-600 text-white border-sky-600' : 'border-slate-300 text-slate-400'}`}>{entry.done && <Check size={16} />}</button>
                 <div className="flex-1 min-w-0"><div className="flex items-center gap-2 flex-wrap"><span className={`text-sm font-bold text-slate-900 ${entry.done ? 'line-through' : ''}`}>{entry.title}</span><span className="text-[11px] rounded-full bg-sky-50 text-sky-800 px-2 py-0.5">{ENTRY_TYPES[entry.type]}</span></div><div className="flex items-center gap-3 text-xs text-slate-500 mt-1">{entry.time && <span className="flex items-center gap-1"><Clock3 size={13} />{entry.time}</span>}{entry.amount > 0 && <span>{formatCurrency(entry.amount)}</span>}</div>{entry.notes && <p className="text-xs text-slate-600 mt-1">{entry.notes}</p>}</div>
                 <button type="button" onClick={() => editEntry(entry)} aria-label={`Editar ${entry.title}`} className="p-1.5 text-slate-500 hover:text-sky-700"><Pencil size={16} /></button>
-                <button type="button" onClick={() => updateEntry(entry.id, items => items.filter(item => item.id !== entry.id))} aria-label={`Excluir ${entry.title}`} className="p-1.5 text-slate-500 hover:text-rose-700"><Trash2 size={16} /></button>
+                <button type="button" onClick={() => setEntryToDelete(entry)} aria-label={`Excluir ${entry.title}`} className="p-1.5 text-slate-500 hover:text-rose-700"><Trash2 size={16} /></button>
               </div>
             ))}
           </div>
@@ -172,6 +200,23 @@ export function TravelView({ list, onUpdateList }: TravelViewProps) {
             <button type="submit" className="w-full rounded-xl bg-sky-600 hover:bg-sky-700 text-white py-3 font-bold text-sm">Salvar atividade</button>
           </form>
         </div>
+      </div>}
+
+      {entryToDelete && <div className="fixed inset-0 z-60 bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setEntryToDelete(null)}>
+        <div role="alertdialog" aria-modal="true" aria-labelledby="delete-travel-title" className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl" onClick={event => event.stopPropagation()}>
+          <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-rose-100 text-rose-700"><Trash2 size={21} /></div>
+          <h2 id="delete-travel-title" className="text-center text-base font-extrabold text-slate-900">Excluir lançamento?</h2>
+          <p className="mt-1 text-center text-sm text-slate-500">“{entryToDelete.title}” será removido da viagem.</p>
+          <div className="mt-5 grid grid-cols-2 gap-2">
+            <button type="button" onClick={() => setEntryToDelete(null)} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold text-slate-700">Cancelar</button>
+            <button type="button" onClick={confirmDeleteEntry} className="rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-rose-700">Excluir</button>
+          </div>
+        </div>
+      </div>}
+
+      {deletedEntry && <div role="status" className="fixed bottom-5 left-1/2 z-70 flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 items-center gap-3 rounded-xl bg-slate-900 px-4 py-3 text-sm text-white shadow-2xl">
+        <span className="min-w-0 flex-1 truncate">“{deletedEntry.entry.title}” foi excluído.</span>
+        <button type="button" onClick={undoDeleteEntry} className="shrink-0 font-extrabold text-sky-300 hover:text-sky-200">Desfazer</button>
       </div>}
     </div>
   );
