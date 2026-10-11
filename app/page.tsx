@@ -28,7 +28,9 @@ import { applyTheme, getThemePreferences } from '@/lib/preferences';
 import {
   backupAppData,
   deleteListFromSupabase,
+  flushPendingSupabaseBackup,
   getCurrentSession,
+  isOfflineSyncPending,
   isSupabaseConfigured,
   loadListsFromSupabase,
   onAuthSessionChange,
@@ -85,6 +87,7 @@ function ShoppingApp() {
     let active = true;
     let unsubscribeRealtime = () => {};
     const applyRemote = async () => {
+      if (isOfflineSyncPending() || !navigator.onLine) return;
       const remote = await loadListsFromSupabase();
       if (!active || !remote.length) return;
       setLists(remote);
@@ -96,6 +99,11 @@ function ShoppingApp() {
     };
     const initialize = async () => {
       try {
+        if (!navigator.onLine) {
+          setSyncNotice('Modo offline: alterações salvas neste aparelho.');
+          return;
+        }
+        await flushPendingSupabaseBackup();
         const remote = await loadListsFromSupabase();
         if (!active) return;
         if (remote.length) {
@@ -129,15 +137,37 @@ function ShoppingApp() {
           if (claimed.length) { setActiveListId(claimed[0].id); saveActiveListId(claimed[0].id); }
           await backupAppData(claimed);
         }
-        unsubscribeRealtime = subscribeToListChanges(() => { void applyRemote(); });
         setSyncNotice('Sincronização em tempo real ativa.');
         window.setTimeout(() => setSyncNotice(''), 2200);
       } catch (error) {
         setSyncNotice(error instanceof Error ? error.message : 'Não foi possível sincronizar com o Supabase.');
+      } finally {
+        if (active) unsubscribeRealtime = subscribeToListChanges(() => { void applyRemote(); });
       }
     };
+    const handleOnline = async () => {
+      setSyncNotice('Conexão recuperada. Sincronizando alterações...');
+      try {
+        await flushPendingSupabaseBackup();
+        await applyRemote();
+        if (active) {
+          setSyncNotice('Alterações sincronizadas.');
+          window.setTimeout(() => setSyncNotice(''), 2200);
+        }
+      } catch (error) {
+        if (active) setSyncNotice(error instanceof Error ? error.message : 'A sincronização será tentada novamente.');
+      }
+    };
+    const handleOffline = () => setSyncNotice('Modo offline: alterações salvas neste aparelho.');
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
     void initialize();
-    return () => { active = false; unsubscribeRealtime(); };
+    return () => {
+      active = false;
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      unsubscribeRealtime();
+    };
   }, [session]);
 
   // SUPORTE AO BOTÃO VOLTAR DO CELULAR E TECLA ESC

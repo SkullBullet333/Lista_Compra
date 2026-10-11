@@ -1,12 +1,19 @@
 import { createClient, Session, SupabaseClient, User } from '@supabase/supabase-js';
 import { getCustomCategories } from '@/lib/categories';
 import { getThemePreferences } from '@/lib/preferences';
-import { getSavedItemConfigs, getPriceHistory, getStoredActiveListId, saveActiveListId, saveLists } from '@/lib/storage';
+import { getSavedItemConfigs, getPriceHistory, getStoredActiveListId, getStoredLists, saveActiveListId, saveLists } from '@/lib/storage';
 import { getTemplates } from '@/lib/templates';
 import { ListCollaborator, ShoppingList } from '@/types/grocery';
 
 let client: SupabaseClient | null | undefined;
 let backupTimer: ReturnType<typeof setTimeout> | undefined;
+const OFFLINE_SYNC_KEY = 'minhas_listas_pending_sync_v1';
+
+type OfflineSyncPayload = {
+  lists: ShoppingList[];
+  deletedListIds: string[];
+  revision: string;
+};
 
 type SupabaseFailure = {
   message?: string;
@@ -42,6 +49,31 @@ function repairLocalListIds(list: ShoppingList, userId: string): void {
   list.items = list.items.map(item => ({ ...item, id: `${userId}-item-${crypto.randomUUID()}` }));
   list.travelEntries = (list.travelEntries || []).map(entry => ({ ...entry, id: `${userId}-travel-${crypto.randomUUID()}` }));
   if (getStoredActiveListId() === previousListId) saveActiveListId(list.id);
+}
+
+function readOfflineSync(): OfflineSyncPayload | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const value = localStorage.getItem(OFFLINE_SYNC_KEY);
+    return value ? JSON.parse(value) as OfflineSyncPayload : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeOfflineSync(lists: ShoppingList[], deletedListIds?: string[]): OfflineSyncPayload {
+  const current = readOfflineSync();
+  const payload: OfflineSyncPayload = {
+    lists,
+    deletedListIds: [...new Set(deletedListIds || current?.deletedListIds || [])],
+    revision: crypto.randomUUID(),
+  };
+  localStorage.setItem(OFFLINE_SYNC_KEY, JSON.stringify(payload));
+  return payload;
+}
+
+export function isOfflineSyncPending(): boolean {
+  return Boolean(readOfflineSync());
 }
 
 export function isSupabaseConfigured(): boolean {
@@ -264,19 +296,39 @@ export async function backupAppData(lists: ShoppingList[]): Promise<boolean> {
 export async function deleteListFromSupabase(listId: string): Promise<void> {
   const supabase = getSupabaseClient();
   if (!supabase) return;
-  const { error } = await supabase.from('shopping_lists').delete().eq('id', listId);
-  if (error) throw error;
+  const pending = readOfflineSync();
+  writeOfflineSync(pending?.lists || getStoredLists(), [...(pending?.deletedListIds || []), listId]);
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+  await flushPendingSupabaseBackup();
 }
 
 export function scheduleSupabaseBackup(lists: ShoppingList[]): void {
   if (!getSupabaseClient()) return;
+  writeOfflineSync(lists);
   if (backupTimer) clearTimeout(backupTimer);
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return;
   backupTimer = setTimeout(() => {
-    backupAppData(lists).catch(error => {
+    flushPendingSupabaseBackup().catch(error => {
       const failure = error instanceof Error ? error : syncError('Falha ao sincronizar com o Supabase', error);
       console.error(failure.message);
     });
   }, 450);
+}
+
+export async function flushPendingSupabaseBackup(): Promise<boolean> {
+  const pending = readOfflineSync();
+  if (!pending) return false;
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return false;
+  await backupAppData(pending.lists);
+  const supabase = getSupabaseClient();
+  if (!supabase) return false;
+  for (const listId of pending.deletedListIds) {
+    const { error } = await supabase.from('shopping_lists').delete().eq('id', listId);
+    ensureSyncSucceeded('Não foi possível excluir uma lista pendente', error);
+  }
+  const latest = readOfflineSync();
+  if (latest?.revision === pending.revision) localStorage.removeItem(OFFLINE_SYNC_KEY);
+  return true;
 }
 
 export function subscribeToListChanges(onChange: () => void): () => void {
