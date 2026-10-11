@@ -98,7 +98,8 @@ begin
 
   insert into public.list_invitations(list_id, email, role, invited_by)
   values (target_list_id, normalized_email, target_role, auth.uid())
-  on conflict do update set role = excluded.role, invited_by = excluded.invited_by;
+  on conflict (list_id, (lower(email))) do update
+  set role = excluded.role, invited_by = excluded.invited_by;
 
   select id into target_user from auth.users where lower(email) = normalized_email limit 1;
   if target_user is not null then
