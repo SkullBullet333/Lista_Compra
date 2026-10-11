@@ -168,7 +168,7 @@ export async function loadListsFromSupabase(): Promise<ShoppingList[]> {
     travelEntries: (travelRows || []).filter(entry => entry.list_id === row.id).map(entry => ({
       id: entry.id as string, title: entry.title as string, date: entry.entry_date as string, time: (entry.entry_time as string | null)?.slice(0, 5) || '',
       type: entry.entry_type as 'passeio' | 'comida' | 'bebida' | 'transporte' | 'hospedagem' | 'gasto', amount: Number(entry.amount),
-      notes: (entry.notes as string | null) || undefined, done: Boolean(entry.done), createdAt: dateToNumber(entry.created_at as string),
+      notes: (entry.notes as string | null) || undefined, done: Boolean(entry.done), paid: Boolean(entry.paid), createdAt: dateToNumber(entry.created_at as string),
     })),
   }));
 }
@@ -244,7 +244,7 @@ export async function backupAppData(lists: ShoppingList[]): Promise<boolean> {
     }
     const travelEntries = (list.travelEntries || []).map((entry, position) => ({
       id: entry.id, list_id: list.id, user_id: user.id, title: entry.title, entry_date: entry.date, entry_time: entry.time || null,
-      entry_type: entry.type, amount: entry.amount, notes: entry.notes || null, done: entry.done, position,
+      entry_type: entry.type, amount: entry.amount, notes: entry.notes || null, done: entry.done, paid: Boolean(entry.paid), position,
       created_at: new Date(entry.createdAt).toISOString(), updated_at: new Date(list.updatedAt).toISOString(),
     }));
     if (travelEntries.length) {
@@ -355,11 +355,42 @@ export async function getListCollaborators(listId: string): Promise<ListCollabor
   }));
 }
 
-export async function shareListWithEmail(listId: string, email: string, role: 'editor' | 'viewer'): Promise<string> {
+export async function shareListWithEmail(list: ShoppingList, email: string, role: 'editor' | 'viewer'): Promise<string> {
   const supabase = getSupabaseClient();
   if (!supabase) throw new Error('Supabase ainda não está configurado.');
-  const { data, error } = await supabase.rpc('share_list_with_email', { target_list_id: listId, target_email: email, target_role: role });
-  if (error) throw error;
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    throw new Error('Conecte-se à internet para compartilhar esta lista.');
+  }
+  const normalizedEmail = email.trim().toLocaleLowerCase('pt-BR');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    throw new Error('Digite um e-mail válido para compartilhar.');
+  }
+  const user = await requireUser(supabase);
+  await flushPendingSupabaseBackup();
+
+  let { data: remoteList, error: listError } = await supabase
+    .from('shopping_lists')
+    .select('id,user_id')
+    .eq('id', list.id)
+    .maybeSingle();
+  ensureSyncSucceeded(`Não foi possível preparar a lista "${list.title}" para compartilhar`, listError);
+  if (!remoteList) {
+    await backupAppData([list]);
+    const result = await supabase.from('shopping_lists').select('id,user_id').eq('id', list.id).maybeSingle();
+    remoteList = result.data;
+    listError = result.error;
+    ensureSyncSucceeded(`Não foi possível preparar a lista "${list.title}" para compartilhar`, listError);
+  }
+  if (!remoteList || remoteList.user_id !== user.id) {
+    throw new Error('Somente o proprietário da lista pode compartilhar o acesso.');
+  }
+
+  const { data, error } = await supabase.rpc('share_list_with_email', {
+    target_list_id: list.id,
+    target_email: normalizedEmail,
+    target_role: role,
+  });
+  if (error) throw syncError('Não foi possível compartilhar', error);
   return String(data || 'Lista compartilhada.');
 }
 

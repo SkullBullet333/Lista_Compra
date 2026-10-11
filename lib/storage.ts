@@ -293,7 +293,11 @@ export function getStoredLists(): ShoppingList[] {
     }
     const parsed = JSON.parse(data);
     return Array.isArray(parsed) && parsed.length > 0
-      ? parsed.map((list: ShoppingList) => ({ ...list, type: list.type === 'travel' ? 'travel' : 'market', travelEntries: list.travelEntries || [] }))
+      ? parsed.map((list: ShoppingList) => ({
+          ...list,
+          type: list.type === 'travel' ? 'travel' : 'market',
+          travelEntries: (list.travelEntries || []).map(entry => ({ ...entry, paid: Boolean(entry.paid) })),
+        }))
       : INITIAL_LISTS;
   } catch {
     return INITIAL_LISTS;

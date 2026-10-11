@@ -23,6 +23,7 @@ export interface TravelEntry {
   amount: number;
   notes?: string;
   done: boolean;
+  paid: boolean;
   createdAt: number;
 }
 

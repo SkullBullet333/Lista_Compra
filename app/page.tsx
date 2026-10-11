@@ -347,6 +347,7 @@ function ShoppingApp() {
         ...entry,
         id: `${session?.user.id ? `${session.user.id}-` : ''}trip-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
         done: false,
+        paid: false,
       })),
     };
 

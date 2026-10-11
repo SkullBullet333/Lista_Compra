@@ -67,7 +67,7 @@ function ListEditModalForm({
     setShareBusy(true);
     setShareMessage('');
     try {
-      setShareMessage(await shareListWithEmail(list.id, shareEmail.trim(), shareRole));
+      setShareMessage(await shareListWithEmail(list, shareEmail.trim(), shareRole));
       setShareEmail('');
       await refreshCollaborators();
     } catch (error) {
