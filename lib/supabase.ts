@@ -1,7 +1,7 @@
 import { createClient, Session, SupabaseClient, User } from '@supabase/supabase-js';
 import { getCustomCategories } from '@/lib/categories';
 import { getThemePreferences } from '@/lib/preferences';
-import { getSavedItemConfigs, getPriceHistory } from '@/lib/storage';
+import { getSavedItemConfigs, getPriceHistory, getStoredActiveListId, saveActiveListId, saveLists } from '@/lib/storage';
 import { getTemplates } from '@/lib/templates';
 import { ListCollaborator, ShoppingList } from '@/types/grocery';
 
@@ -23,6 +23,25 @@ function syncError(operation: string, failure: unknown): Error {
 
 function ensureSyncSucceeded(operation: string, failure: unknown): void {
   if (failure) throw syncError(operation, failure);
+}
+
+function isListIdConflict(failure: unknown): boolean {
+  const code = (failure as SupabaseFailure | null)?.code;
+  return code === '23505' || code === '42501';
+}
+
+function createOwnedListId(userId: string): string {
+  return `${userId}-list-${crypto.randomUUID()}`;
+}
+
+function repairLocalListIds(list: ShoppingList, userId: string): void {
+  const previousListId = list.id;
+  list.id = createOwnedListId(userId);
+  list.ownerId = userId;
+  list.accessRole = 'owner';
+  list.items = list.items.map(item => ({ ...item, id: `${userId}-item-${crypto.randomUUID()}` }));
+  list.travelEntries = (list.travelEntries || []).map(entry => ({ ...entry, id: `${userId}-travel-${crypto.randomUUID()}` }));
+  if (getStoredActiveListId() === previousListId) saveActiveListId(list.id);
 }
 
 export function isSupabaseConfigured(): boolean {
@@ -139,11 +158,39 @@ export async function backupAppData(lists: ShoppingList[]): Promise<boolean> {
     const listOwnerId = list.accessRole === 'editor' && list.ownerId
       ? list.ownerId
       : user.id;
-    const { error: listError } = await supabase.from('shopping_lists').upsert({
+    const listRow = {
       id: list.id, user_id: listOwnerId, title: list.title, list_type: list.type || 'market', market_name: list.marketName || null,
       destination: list.destination || null, target_budget: list.targetBudget ?? null, color: list.color || null,
       created_at: new Date(list.createdAt).toISOString(), updated_at: new Date(list.updatedAt).toISOString(),
-    });
+    };
+    const { data: existingList, error: lookupError } = await supabase
+      .from('shopping_lists')
+      .select('id')
+      .eq('id', list.id)
+      .maybeSingle();
+    ensureSyncSucceeded(`Não foi possível conferir a lista "${list.title}"`, lookupError);
+
+    let listError: unknown = null;
+    if (existingList) {
+      const { id: _id, user_id: _userId, ...changes } = listRow;
+      const result = await supabase.from('shopping_lists').update(changes).eq('id', list.id);
+      listError = result.error;
+    } else if (list.accessRole === 'editor') {
+      listError = { message: 'A lista compartilhada não está mais disponível para edição.', code: '42501' };
+    } else {
+      const result = await supabase.from('shopping_lists').insert(listRow);
+      listError = result.error;
+      if (listError && isListIdConflict(listError)) {
+        repairLocalListIds(list, user.id);
+        saveLists(lists);
+        const retry = await supabase.from('shopping_lists').insert({
+          ...listRow,
+          id: list.id,
+          user_id: user.id,
+        });
+        listError = retry.error;
+      }
+    }
     ensureSyncSucceeded(`Não foi possível salvar a lista "${list.title}"`, listError);
     const listItems = list.items.map((item, position) => ({
       id: item.id, list_id: list.id, user_id: user.id, name: item.name, normalized_name: item.name.trim().toLocaleLowerCase('pt-BR'),
