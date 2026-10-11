@@ -49,18 +49,17 @@ export function TravelView({ list, onUpdateList }: TravelViewProps) {
   const [type, setType] = useState<TravelEntryType>('passeio');
   const [amount, setAmount] = useState('');
   const [notes, setNotes] = useState('');
-  const [paid, setPaid] = useState(false);
   const [paymentFilter, setPaymentFilter] = useState<'unpaid' | 'paid'>('unpaid');
 
   const groups = useMemo(() => {
-    const visible = entries.filter(entry => paymentFilter === 'paid' ? Boolean(entry.paid) : !entry.paid);
+    const visible = entries.filter(entry => paymentFilter === 'paid' ? entry.done : !entry.done);
     const sorted = [...visible].sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time) || a.createdAt - b.createdAt);
     return Array.from(new Set(sorted.map(entry => entry.date))).map(day => ({ day, entries: sorted.filter(entry => entry.date === day) }));
   }, [entries, paymentFilter]);
   const total = entries.reduce((sum, entry) => sum + entry.amount, 0);
   const completed = entries.filter(entry => entry.done).length;
-  const unpaidEntries = entries.filter(entry => !entry.paid);
-  const paidEntries = entries.filter(entry => Boolean(entry.paid));
+  const unpaidEntries = entries.filter(entry => !entry.done);
+  const paidEntries = entries.filter(entry => entry.done);
   const unpaidTotal = unpaidEntries.reduce((sum, entry) => sum + entry.amount, 0);
   const paidTotal = paidEntries.reduce((sum, entry) => sum + entry.amount, 0);
 
@@ -73,7 +72,6 @@ export function TravelView({ list, onUpdateList }: TravelViewProps) {
     setType('passeio');
     setAmount('');
     setNotes('');
-    setPaid(false);
   };
 
   const editEntry = (entry: TravelEntry) => {
@@ -84,7 +82,6 @@ export function TravelView({ list, onUpdateList }: TravelViewProps) {
     setType(entry.type);
     setAmount(entry.amount ? entry.amount.toFixed(2).replace('.', ',') : '');
     setNotes(entry.notes || '');
-    setPaid(Boolean(entry.paid));
     setIsEditorOpen(true);
   };
 
@@ -102,7 +99,7 @@ export function TravelView({ list, onUpdateList }: TravelViewProps) {
       amount: parseAmount(amount),
       notes: notes.trim() || undefined,
       done: existing?.done ?? false,
-      paid,
+      paid: existing?.done ?? false,
       createdAt: existing?.createdAt || now,
     };
     onUpdateList({
@@ -153,9 +150,8 @@ export function TravelView({ list, onUpdateList }: TravelViewProps) {
           <div className="space-y-2">
             {dayEntries.map(entry => (
               <div key={entry.id} className={`flex items-start gap-3 rounded-xl border p-3 bg-white ${entry.done ? 'border-sky-200 opacity-70' : 'border-slate-200'}`}>
-                <button type="button" onClick={() => updateEntry(entry.id, items => items.map(item => item.id === entry.id ? { ...item, done: !item.done } : item))} aria-label={entry.done ? `Marcar ${entry.title} como pendente` : `Concluir ${entry.title}`} className={`w-7 h-7 rounded-full border flex items-center justify-center shrink-0 ${entry.done ? 'bg-sky-600 text-white border-sky-600' : 'border-slate-300 text-slate-400'}`}>{entry.done && <Check size={16} />}</button>
-                <div className="flex-1 min-w-0"><div className="flex items-center gap-2 flex-wrap"><span className={`text-sm font-bold text-slate-900 ${entry.done ? 'line-through' : ''}`}>{entry.title}</span><span className="text-[11px] rounded-full bg-sky-50 text-sky-800 px-2 py-0.5">{ENTRY_TYPES[entry.type]}</span><span className={`text-[11px] rounded-full px-2 py-0.5 ${entry.paid ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{entry.paid ? 'Pago' : 'Não pago'}</span></div><div className="flex items-center gap-3 text-xs text-slate-500 mt-1">{entry.time && <span className="flex items-center gap-1"><Clock3 size={13} />{entry.time}</span>}{entry.amount > 0 && <span>{formatCurrency(entry.amount)}</span>}</div>{entry.notes && <p className="text-xs text-slate-600 mt-1">{entry.notes}</p>}</div>
-                <button type="button" onClick={() => updateEntry(entry.id, items => items.map(item => item.id === entry.id ? { ...item, paid: !item.paid } : item))} aria-label={entry.paid ? `Marcar ${entry.title} como não pago` : `Marcar ${entry.title} como pago`} className={`p-1.5 rounded-lg ${entry.paid ? 'text-emerald-700 bg-emerald-50' : 'text-amber-700 bg-amber-50'}`}><Wallet size={16} /></button>
+                <button type="button" onClick={() => updateEntry(entry.id, items => items.map(item => item.id === entry.id ? { ...item, done: !item.done, paid: !item.done } : item))} aria-label={entry.done ? `Marcar ${entry.title} como não pago` : `Marcar ${entry.title} como pago`} className={`w-7 h-7 rounded-full border flex items-center justify-center shrink-0 ${entry.done ? 'bg-sky-600 text-white border-sky-600' : 'border-slate-300 text-slate-400'}`}>{entry.done && <Check size={16} />}</button>
+                <div className="flex-1 min-w-0"><div className="flex items-center gap-2 flex-wrap"><span className={`text-sm font-bold text-slate-900 ${entry.done ? 'line-through' : ''}`}>{entry.title}</span><span className="text-[11px] rounded-full bg-sky-50 text-sky-800 px-2 py-0.5">{ENTRY_TYPES[entry.type]}</span></div><div className="flex items-center gap-3 text-xs text-slate-500 mt-1">{entry.time && <span className="flex items-center gap-1"><Clock3 size={13} />{entry.time}</span>}{entry.amount > 0 && <span>{formatCurrency(entry.amount)}</span>}</div>{entry.notes && <p className="text-xs text-slate-600 mt-1">{entry.notes}</p>}</div>
                 <button type="button" onClick={() => editEntry(entry)} aria-label={`Editar ${entry.title}`} className="p-1.5 text-slate-500 hover:text-sky-700"><Pencil size={16} /></button>
                 <button type="button" onClick={() => updateEntry(entry.id, items => items.filter(item => item.id !== entry.id))} aria-label={`Excluir ${entry.title}`} className="p-1.5 text-slate-500 hover:text-rose-700"><Trash2 size={16} /></button>
               </div>
@@ -172,7 +168,6 @@ export function TravelView({ list, onUpdateList }: TravelViewProps) {
             <div className="grid grid-cols-2 gap-3"><label className="block text-xs font-bold text-slate-700">Data *<input required type="date" value={date} onChange={event => setDate(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-2 py-2.5 text-sm text-slate-900" /></label><label className="block text-xs font-bold text-slate-700">Horário (opcional)<input type="time" value={time} onChange={event => setTime(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-2 py-2.5 text-sm text-slate-900" /></label></div>
             <label className="block text-xs font-bold text-slate-700">Tipo<select value={type} onChange={event => setType(event.target.value as TravelEntryType)} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900">{(Object.keys(ENTRY_TYPES) as TravelEntryType[]).map(key => <option key={key} value={key}>{ENTRY_TYPES[key]}</option>)}</select></label>
             <label className="block text-xs font-bold text-slate-700">Valor (R$)<input inputMode="decimal" value={amount} onChange={event => setAmount(event.target.value.replace(/[^0-9,.]/g, ''))} placeholder="0,00" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label>
-            <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 px-3 py-3 text-sm font-semibold text-slate-700"><span>Pagamento realizado</span><input type="checkbox" checked={paid} onChange={event => setPaid(event.target.checked)} className="h-5 w-5 accent-emerald-600" /></label>
             <label className="block text-xs font-bold text-slate-700">Anotação<input value={notes} onChange={event => setNotes(event.target.value)} placeholder="Endereço, reserva ou detalhes" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label>
             <button type="submit" className="w-full rounded-xl bg-sky-600 hover:bg-sky-700 text-white py-3 font-bold text-sm">Salvar atividade</button>
           </form>

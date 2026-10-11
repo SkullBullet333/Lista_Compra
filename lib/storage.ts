@@ -296,7 +296,7 @@ export function getStoredLists(): ShoppingList[] {
       ? parsed.map((list: ShoppingList) => ({
           ...list,
           type: list.type === 'travel' ? 'travel' : 'market',
-          travelEntries: (list.travelEntries || []).map(entry => ({ ...entry, paid: Boolean(entry.paid) })),
+          travelEntries: (list.travelEntries || []).map(entry => ({ ...entry, paid: Boolean(entry.done) })),
         }))
       : INITIAL_LISTS;
   } catch {

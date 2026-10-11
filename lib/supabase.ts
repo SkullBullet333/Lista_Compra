@@ -168,7 +168,7 @@ export async function loadListsFromSupabase(): Promise<ShoppingList[]> {
     travelEntries: (travelRows || []).filter(entry => entry.list_id === row.id).map(entry => ({
       id: entry.id as string, title: entry.title as string, date: entry.entry_date as string, time: (entry.entry_time as string | null)?.slice(0, 5) || '',
       type: entry.entry_type as 'passeio' | 'comida' | 'bebida' | 'transporte' | 'hospedagem' | 'gasto', amount: Number(entry.amount),
-      notes: (entry.notes as string | null) || undefined, done: Boolean(entry.done), paid: Boolean(entry.paid), createdAt: dateToNumber(entry.created_at as string),
+      notes: (entry.notes as string | null) || undefined, done: Boolean(entry.done), paid: Boolean(entry.done), createdAt: dateToNumber(entry.created_at as string),
     })),
   }));
 }
@@ -244,7 +244,7 @@ export async function backupAppData(lists: ShoppingList[]): Promise<boolean> {
     }
     const travelEntries = (list.travelEntries || []).map((entry, position) => ({
       id: entry.id, list_id: list.id, user_id: user.id, title: entry.title, entry_date: entry.date, entry_time: entry.time || null,
-      entry_type: entry.type, amount: entry.amount, notes: entry.notes || null, done: entry.done, paid: Boolean(entry.paid), position,
+      entry_type: entry.type, amount: entry.amount, notes: entry.notes || null, done: entry.done, paid: entry.done, position,
       created_at: new Date(entry.createdAt).toISOString(), updated_at: new Date(list.updatedAt).toISOString(),
     }));
     if (travelEntries.length) {

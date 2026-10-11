@@ -137,8 +137,7 @@ function ShoppingApp() {
           if (claimed.length) { setActiveListId(claimed[0].id); saveActiveListId(claimed[0].id); }
           await backupAppData(claimed);
         }
-        setSyncNotice('Sincronização em tempo real ativa.');
-        window.setTimeout(() => setSyncNotice(''), 2200);
+        setSyncNotice('');
       } catch (error) {
         setSyncNotice(error instanceof Error ? error.message : 'Não foi possível sincronizar com o Supabase.');
       } finally {
@@ -151,8 +150,7 @@ function ShoppingApp() {
         await flushPendingSupabaseBackup();
         await applyRemote();
         if (active) {
-          setSyncNotice('Alterações sincronizadas.');
-          window.setTimeout(() => setSyncNotice(''), 2200);
+          setSyncNotice('');
         }
       } catch (error) {
         if (active) setSyncNotice(error instanceof Error ? error.message : 'A sincronização será tentada novamente.');
