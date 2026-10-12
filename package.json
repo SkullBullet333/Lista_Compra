@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "node scripts/next-wasm.cjs dev",
+    "build": "node scripts/next-wasm.cjs build",
     "start": "next start",
     "lint": "eslint .",
     "clean": "next clean"
@@ -26,6 +26,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@next/swc-wasm-nodejs": "^15.5.27",
     "@tailwindcss/postcss": "4.1.11",
     "@tailwindcss/typography": "^0.5.19",
     "@types/node": "^20",

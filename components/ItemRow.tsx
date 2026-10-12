@@ -47,6 +47,10 @@ export function ItemRow({
   }, [item.checked]);
 
   const handleTouchStart = (event: React.TouchEvent) => {
+    if ((event.target as HTMLElement).closest('button, input')) {
+      swipeStart.current = null;
+      return;
+    }
     const touch = event.touches[0];
     swipeStart.current = { x: touch.clientX, y: touch.clientY, offset: swipeOffset };
   };
