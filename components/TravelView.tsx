@@ -39,6 +39,47 @@ function parseAmount(value: string): number {
   return Number.isFinite(number) && number > 0 ? number : 0;
 }
 
+function TravelEntryRow({
+  entry,
+  onTogglePaid,
+  onEdit,
+  onDelete,
+}: {
+  entry: TravelEntry;
+  onTogglePaid: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const [swipeOffset, setSwipeOffset] = useState(0);
+  const swipeStart = useRef<{ x: number; y: number; offset: number } | null>(null);
+  const handleTouchStart = (event: React.TouchEvent) => {
+    const touch = event.touches[0];
+    swipeStart.current = { x: touch.clientX, y: touch.clientY, offset: swipeOffset };
+  };
+  const handleTouchMove = (event: React.TouchEvent) => {
+    if (!swipeStart.current) return;
+    const touch = event.touches[0];
+    const deltaX = touch.clientX - swipeStart.current.x;
+    const deltaY = touch.clientY - swipeStart.current.y;
+    if (Math.abs(deltaY) > Math.abs(deltaX)) return;
+    setSwipeOffset(Math.max(-76, Math.min(0, swipeStart.current.offset + deltaX)));
+  };
+  const handleTouchEnd = () => {
+    setSwipeOffset(current => current <= -38 ? -76 : 0);
+    swipeStart.current = null;
+  };
+
+  return <div className="relative overflow-hidden rounded-xl">
+    <button type="button" onClick={() => { setSwipeOffset(0); onDelete(); }} className="absolute inset-y-0 right-0 flex w-[76px] items-center justify-center gap-1 bg-rose-600 text-xs font-bold text-white sm:hidden" aria-label={`Excluir ${entry.title}`}><Trash2 size={15} /><span>Excluir</span></button>
+    <div onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd} style={{ transform: `translateX(${swipeOffset}px)`, touchAction: 'pan-y' }} className={`flex items-start gap-3 rounded-xl border p-3 bg-white transition-[transform,border-color] duration-150 ${entry.done ? 'border-sky-200 bg-slate-50' : 'border-slate-200'}`}>
+      <button type="button" onClick={onTogglePaid} aria-label={entry.done ? `Marcar ${entry.title} como não pago` : `Marcar ${entry.title} como pago`} className={`w-7 h-7 rounded-full border flex items-center justify-center shrink-0 ${entry.done ? 'bg-sky-600 text-white border-sky-600' : 'border-slate-300 text-slate-400'}`}>{entry.done && <Check size={16} />}</button>
+      <div className="flex-1 min-w-0 cursor-pointer" onClick={onEdit}><div className="flex items-center gap-2 flex-wrap"><span className={`text-sm font-bold text-slate-900 ${entry.done ? 'line-through' : ''}`}>{entry.title}</span><span className="text-[11px] rounded-full bg-sky-50 text-sky-800 px-2 py-0.5">{ENTRY_TYPES[entry.type]}</span></div><div className="flex items-center gap-3 text-xs text-slate-500 mt-1">{entry.time && <span className="flex items-center gap-1"><Clock3 size={13} />{entry.time}</span>}{entry.amount > 0 && <span>{formatCurrency(entry.amount)}</span>}</div>{entry.notes && <p className="text-xs text-slate-600 mt-1">{entry.notes}</p>}</div>
+      <button type="button" onClick={onEdit} aria-label={`Editar ${entry.title}`} className="hidden sm:flex p-1.5 text-slate-500 hover:text-sky-700"><Pencil size={16} /></button>
+      <button type="button" onClick={onDelete} aria-label={`Excluir ${entry.title}`} className="hidden sm:flex p-1.5 text-slate-500 hover:text-rose-700"><Trash2 size={16} /></button>
+    </div>
+  </div>;
+}
+
 export function TravelView({ list, onUpdateList }: TravelViewProps) {
   const entries = useMemo(() => list.travelEntries || [], [list.travelEntries]);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -50,7 +91,6 @@ export function TravelView({ list, onUpdateList }: TravelViewProps) {
   const [amount, setAmount] = useState('');
   const [notes, setNotes] = useState('');
   const [paymentFilter, setPaymentFilter] = useState<'unpaid' | 'paid'>('unpaid');
-  const [entryToDelete, setEntryToDelete] = useState<TravelEntry | null>(null);
   const [deletedEntry, setDeletedEntry] = useState<{ entry: TravelEntry; index: number } | null>(null);
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -121,12 +161,11 @@ export function TravelView({ list, onUpdateList }: TravelViewProps) {
     if (undoTimer.current) clearTimeout(undoTimer.current);
   }, []);
 
-  const confirmDeleteEntry = () => {
-    if (!entryToDelete) return;
-    const index = entries.findIndex(entry => entry.id === entryToDelete.id);
-    const removed = entryToDelete;
+  const handleDeleteEntry = (id: string) => {
+    const index = entries.findIndex(entry => entry.id === id);
+    if (index < 0) return;
+    const removed = entries[index];
     updateEntry(removed.id, items => items.filter(item => item.id !== removed.id));
-    setEntryToDelete(null);
     setDeletedEntry({ entry: removed, index: Math.max(index, 0) });
     if (undoTimer.current) clearTimeout(undoTimer.current);
     undoTimer.current = setTimeout(() => setDeletedEntry(null), 7000);
@@ -150,7 +189,7 @@ export function TravelView({ list, onUpdateList }: TravelViewProps) {
           {list.destination && <p className="text-sm text-slate-600 flex items-center gap-1 mt-1"><MapPin size={14} />{list.destination}</p>}
         </div>
         <button type="button" onClick={() => { resetEditor(); setIsEditorOpen(true); }} className="flex items-center gap-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white px-4 py-2.5 text-sm font-bold">
-          <Plus size={17} /> Adicionar atividade
+          <Plus size={17} /> Novo
         </button>
       </div>
 
@@ -160,11 +199,11 @@ export function TravelView({ list, onUpdateList }: TravelViewProps) {
       </div>
 
       <div className="grid grid-cols-2 gap-2 mb-5" role="tablist" aria-label="Situação dos pagamentos">
-        <button type="button" role="tab" aria-selected={paymentFilter === 'unpaid'} onClick={() => setPaymentFilter('unpaid')} className={`rounded-xl border p-3 text-left transition-colors ${paymentFilter === 'unpaid' ? 'border-amber-400 bg-amber-50 text-amber-900' : 'border-slate-200 bg-white text-slate-600'}`}>
+        <button type="button" role="tab" aria-selected={paymentFilter === 'unpaid'} onClick={() => setPaymentFilter('unpaid')} className={`travel-payment-card travel-payment-card--unpaid rounded-xl border p-3 text-left transition-colors ${paymentFilter === 'unpaid' ? 'is-active' : ''}`}>
           <span className="block text-xs font-bold">Não pagos ({unpaidEntries.length})</span>
           <strong className="block mt-1 text-base">{formatCurrency(unpaidTotal)}</strong>
         </button>
-        <button type="button" role="tab" aria-selected={paymentFilter === 'paid'} onClick={() => setPaymentFilter('paid')} className={`rounded-xl border p-3 text-left transition-colors ${paymentFilter === 'paid' ? 'border-emerald-400 bg-emerald-50 text-emerald-900' : 'border-slate-200 bg-white text-slate-600'}`}>
+        <button type="button" role="tab" aria-selected={paymentFilter === 'paid'} onClick={() => setPaymentFilter('paid')} className={`travel-payment-card travel-payment-card--paid rounded-xl border p-3 text-left transition-colors ${paymentFilter === 'paid' ? 'is-active' : ''}`}>
           <span className="block text-xs font-bold">Pagos ({paidEntries.length})</span>
           <strong className="block mt-1 text-base">{formatCurrency(paidTotal)}</strong>
         </button>
@@ -176,14 +215,7 @@ export function TravelView({ list, onUpdateList }: TravelViewProps) {
         <section key={day} className="mb-5">
           <div className="flex items-center justify-between gap-2 mb-2"><h2 className="text-sm font-extrabold text-slate-800 capitalize">{formatDay(day)}</h2><span className="text-xs font-bold text-slate-600">{formatCurrency(dayEntries.reduce((sum, entry) => sum + entry.amount, 0))}</span></div>
           <div className="space-y-2">
-            {dayEntries.map(entry => (
-              <div key={entry.id} className={`flex items-start gap-3 rounded-xl border p-3 bg-white ${entry.done ? 'border-sky-200 opacity-70' : 'border-slate-200'}`}>
-                <button type="button" onClick={() => updateEntry(entry.id, items => items.map(item => item.id === entry.id ? { ...item, done: !item.done, paid: !item.done } : item))} aria-label={entry.done ? `Marcar ${entry.title} como não pago` : `Marcar ${entry.title} como pago`} className={`w-7 h-7 rounded-full border flex items-center justify-center shrink-0 ${entry.done ? 'bg-sky-600 text-white border-sky-600' : 'border-slate-300 text-slate-400'}`}>{entry.done && <Check size={16} />}</button>
-                <div className="flex-1 min-w-0"><div className="flex items-center gap-2 flex-wrap"><span className={`text-sm font-bold text-slate-900 ${entry.done ? 'line-through' : ''}`}>{entry.title}</span><span className="text-[11px] rounded-full bg-sky-50 text-sky-800 px-2 py-0.5">{ENTRY_TYPES[entry.type]}</span></div><div className="flex items-center gap-3 text-xs text-slate-500 mt-1">{entry.time && <span className="flex items-center gap-1"><Clock3 size={13} />{entry.time}</span>}{entry.amount > 0 && <span>{formatCurrency(entry.amount)}</span>}</div>{entry.notes && <p className="text-xs text-slate-600 mt-1">{entry.notes}</p>}</div>
-                <button type="button" onClick={() => editEntry(entry)} aria-label={`Editar ${entry.title}`} className="p-1.5 text-slate-500 hover:text-sky-700"><Pencil size={16} /></button>
-                <button type="button" onClick={() => setEntryToDelete(entry)} aria-label={`Excluir ${entry.title}`} className="p-1.5 text-slate-500 hover:text-rose-700"><Trash2 size={16} /></button>
-              </div>
-            ))}
+            {dayEntries.map(entry => <TravelEntryRow key={entry.id} entry={entry} onTogglePaid={() => updateEntry(entry.id, items => items.map(item => item.id === entry.id ? { ...item, done: !item.done, paid: !item.done } : item))} onEdit={() => editEntry(entry)} onDelete={() => handleDeleteEntry(entry.id)} />)}
           </div>
         </section>
       ))}
@@ -202,21 +234,9 @@ export function TravelView({ list, onUpdateList }: TravelViewProps) {
         </div>
       </div>}
 
-      {entryToDelete && <div className="fixed inset-0 z-60 bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setEntryToDelete(null)}>
-        <div role="alertdialog" aria-modal="true" aria-labelledby="delete-travel-title" className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl" onClick={event => event.stopPropagation()}>
-          <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-rose-100 text-rose-700"><Trash2 size={21} /></div>
-          <h2 id="delete-travel-title" className="text-center text-base font-extrabold text-slate-900">Excluir lançamento?</h2>
-          <p className="mt-1 text-center text-sm text-slate-500">“{entryToDelete.title}” será removido da viagem.</p>
-          <div className="mt-5 grid grid-cols-2 gap-2">
-            <button type="button" onClick={() => setEntryToDelete(null)} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold text-slate-700">Cancelar</button>
-            <button type="button" onClick={confirmDeleteEntry} className="rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-rose-700">Excluir</button>
-          </div>
-        </div>
-      </div>}
-
-      {deletedEntry && <div role="status" className="fixed bottom-5 left-1/2 z-70 flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 items-center gap-3 rounded-xl bg-slate-900 px-4 py-3 text-sm text-white shadow-2xl">
+      {deletedEntry && <div role="status" className="app-undo-toast fixed bottom-5 left-1/2 z-70 flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 items-center gap-3 rounded-xl px-4 py-3 text-sm shadow-2xl">
         <span className="min-w-0 flex-1 truncate">“{deletedEntry.entry.title}” foi excluído.</span>
-        <button type="button" onClick={undoDeleteEntry} className="shrink-0 font-extrabold text-sky-300 hover:text-sky-200">Desfazer</button>
+        <button type="button" onClick={undoDeleteEntry} className="app-undo-toast__action shrink-0 font-extrabold">Desfazer</button>
       </div>}
     </div>
   );

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Check, Circle, Cloud, LayoutTemplate, LogOut, Moon, PackagePlus, Palette, Sun, Tags } from 'lucide-react';
+import { Check, ChevronRight, Circle, Cloud, Eye, EyeOff, LayoutTemplate, LogOut, Moon, PackagePlus, Palette, Sun, Tags } from 'lucide-react';
 import { Category, CategoryId, ListTemplate, SavedItemConfig, ThemeMode } from '@/types/grocery';
 import { getAllCategories, getCustomCategories, makeCustomCategory, saveCustomCategories } from '@/lib/categories';
 import { deleteItemConfig, getRegisteredItems, getSavedItemConfigs, saveItemConfig } from '@/lib/storage';
@@ -10,12 +10,19 @@ import { getTemplates, saveTemplate } from '@/lib/templates';
 import { backupAppData, scheduleSupabaseBackup } from '@/lib/supabase';
 import { getStoredLists } from '@/lib/storage';
 
+export type SettingsSection = 'home' | 'categories' | 'items' | 'templates' | 'appearance';
+
 function currentTimestamp() {
   return Date.now();
 }
 
-export function SettingsView({ userEmail, onSignOut }: { userEmail?: string; onSignOut?: () => void }) {
-  const [section, setSection] = useState<'categories' | 'items' | 'templates' | 'appearance'>('categories');
+export function SettingsView({ userEmail, onSignOut, section: controlledSection, onSectionChange }: { userEmail?: string; onSignOut?: () => void; section?: SettingsSection; onSectionChange?: (section: SettingsSection) => void }) {
+  const [internalSection, setInternalSection] = useState<SettingsSection>('home');
+  const section = controlledSection ?? internalSection;
+  const setSection = (nextSection: SettingsSection) => {
+    setInternalSection(nextSection);
+    onSectionChange?.(nextSection);
+  };
   const [customCategories, setCustomCategories] = useState(getCustomCategories);
   const [savedItems, setSavedItems] = useState(() => Object.values(getSavedItemConfigs()).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')));
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
@@ -135,8 +142,8 @@ export function SettingsView({ userEmail, onSignOut }: { userEmail?: string; onS
     scheduleSupabaseBackup(getStoredLists());
   };
 
-  const updateTheme = (mode: ThemeMode, primaryColor = theme.primaryColor) => {
-    const next = { mode, primaryColor };
+  const updateTheme = (mode: ThemeMode, primaryColor = theme.primaryColor, showImages = theme.showImages) => {
+    const next = { mode, primaryColor, showImages };
     setTheme(next);
     saveThemePreferences(next);
     applyTheme(next);
@@ -154,16 +161,40 @@ export function SettingsView({ userEmail, onSignOut }: { userEmail?: string; onS
     }
   };
 
+  const openSection = (nextSection: Exclude<typeof section, 'home'>) => {
+    setSection(nextSection);
+    setNotice('');
+  };
+
+  const settingsOptions = [
+    { id: 'categories' as const, icon: Tags, title: 'Categorias', description: 'Organize os grupos dos seus itens.' },
+    { id: 'items' as const, icon: PackagePlus, title: 'Itens cadastrados', description: 'Cadastre produtos para adicionar às listas.' },
+    { id: 'templates' as const, icon: LayoutTemplate, title: 'Modelos de lista', description: 'Crie listas prontas para reutilizar.' },
+    { id: 'appearance' as const, icon: Palette, title: 'Aparência', description: 'Tema, cor principal e imagens dos itens.' },
+  ];
+
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-5 pb-24">
-      <p className="text-sm text-slate-500 mb-5">Organize categorias, produtos, modelos, backup e aparência.</p>
-      <div className="flex flex-wrap gap-2 mb-5">
-        <button type="button" onClick={() => { setSection('categories'); setNotice(''); }} className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold ${section === 'categories' ? 'bg-emerald-600 text-white' : 'bg-white border border-slate-200 text-slate-700'}`}><Tags size={16} /> Categorias</button>
-        <button type="button" onClick={() => { setSection('items'); setNotice(''); }} className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold ${section === 'items' ? 'bg-emerald-600 text-white' : 'bg-white border border-slate-200 text-slate-700'}`}><PackagePlus size={16} /> Itens</button>
-        <button type="button" onClick={() => { setSection('templates'); setNotice(''); }} className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold ${section === 'templates' ? 'bg-emerald-600 text-white' : 'bg-white border border-slate-200 text-slate-700'}`}><LayoutTemplate size={16} /> Modelos</button>
-        <button type="button" onClick={() => { setSection('appearance'); setNotice(''); }} className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold ${section === 'appearance' ? 'bg-emerald-600 text-white' : 'bg-white border border-slate-200 text-slate-700'}`}><Palette size={16} /> Tema</button>
-      </div>
-      <div className="mb-5 flex flex-wrap items-center gap-2"><button type="button" onClick={runBackup} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700"><Cloud size={15} /> Sincronizar agora</button>{userEmail && <span className="text-xs text-slate-500">Conectado como <strong className="text-slate-700">{userEmail}</strong></span>}{onSignOut && <button type="button" onClick={onSignOut} className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700"><LogOut size={14} /> Sair</button>}</div>
+      {section === 'home' ? <>
+        <div className="mb-6">
+          <h1 className="text-xl font-extrabold text-slate-900">Configurações</h1>
+          <p className="mt-1 text-sm text-slate-500">Personalize suas listas e os itens cadastrados.</p>
+        </div>
+        <section className="mb-6">
+          <h2 className="mb-2 px-1 text-xs font-bold uppercase tracking-wide text-slate-500">Listas e itens</h2>
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white divide-y divide-slate-100">
+            {settingsOptions.map(({ id, icon: Icon, title, description }) => <button key={id} type="button" onClick={() => openSection(id)} className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-slate-50 active:bg-slate-100"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><Icon size={20} /></span><span className="min-w-0 flex-1"><span className="block text-sm font-bold text-slate-800">{title}</span><span className="mt-0.5 block text-xs text-slate-500">{description}</span></span><ChevronRight size={20} className="shrink-0 text-slate-400" /></button>)}
+          </div>
+        </section>
+        <section>
+          <h2 className="mb-2 px-1 text-xs font-bold uppercase tracking-wide text-slate-500">Conta e dados</h2>
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white divide-y divide-slate-100">
+            <button type="button" onClick={runBackup} className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-slate-50 active:bg-slate-100"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-50 text-sky-700"><Cloud size={20} /></span><span className="min-w-0 flex-1"><span className="block text-sm font-bold text-slate-800">Sincronizar agora</span><span className="mt-0.5 block text-xs text-slate-500">Faça backup das listas no Supabase.</span></span><ChevronRight size={20} className="shrink-0 text-slate-400" /></button>
+            {userEmail && <div className="flex items-center gap-3 px-4 py-3.5"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600"><Circle size={18} /></span><span className="min-w-0 flex-1"><span className="block text-sm font-bold text-slate-800">Conta conectada</span><span className="mt-0.5 block truncate text-xs text-slate-500">{userEmail}</span></span></div>}
+            {onSignOut && <button type="button" onClick={onSignOut} className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-rose-50 active:bg-rose-100"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-rose-700"><LogOut size={20} /></span><span className="flex-1 text-sm font-bold text-rose-700">Sair da conta</span><ChevronRight size={20} className="shrink-0 text-rose-400" /></button>}
+          </div>
+        </section>
+      </> : <>
       {notice && <p role="status" className="mb-4 text-sm font-semibold text-emerald-800 bg-emerald-50 rounded-xl px-3 py-2">{notice}</p>}
 
       {section === 'categories' ? <div className="grid md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-4 items-start">
@@ -205,7 +236,8 @@ export function SettingsView({ userEmail, onSignOut }: { userEmail?: string; onS
         <div><h2 className="font-extrabold text-slate-900">Tema do aplicativo</h2><p className="text-xs text-slate-500 mt-1">Escolha como o aplicativo aparece neste dispositivo.</p></div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">{([['light', 'Claro', Sun], ['dark', 'Escuro', Moon], ['black', 'Preto', Circle], ['system', 'Sistema', Palette]] as const).map(([mode, label, Icon]) => <button key={mode} type="button" onClick={() => updateTheme(mode)} className={`rounded-xl border p-3 flex flex-col items-center gap-1 text-xs font-bold ${theme.mode === mode ? 'border-emerald-500 bg-emerald-50 text-emerald-900' : 'border-slate-200 text-slate-600'}`}><Icon size={18} fill={mode === 'black' ? 'currentColor' : 'none'} />{label}</button>)}</div>
         <label className="block text-xs font-bold text-slate-700">Cor principal<div className="mt-2 flex items-center gap-3"><input type="color" value={theme.primaryColor} onChange={event => updateTheme(theme.mode, event.target.value)} className="w-14 h-11 rounded-lg cursor-pointer" /><span className="text-sm font-mono text-slate-600 uppercase">{theme.primaryColor}</span></div></label>
-      </div>}
+        <div className="flex items-center justify-between gap-4 rounded-xl border border-slate-200 px-3.5 py-3"><div className="flex items-center gap-3"><span className={`flex h-9 w-9 items-center justify-center rounded-lg ${theme.showImages ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{theme.showImages ? <Eye size={18} /> : <EyeOff size={18} />}</span><div><p className="text-sm font-bold text-slate-800">Exibir imagens dos itens</p><p className="text-xs text-slate-500">{theme.showImages ? 'Fotos visíveis nas listas.' : 'Fotos ocultas nas listas.'}</p></div></div><button type="button" role="switch" aria-checked={theme.showImages} onClick={() => updateTheme(theme.mode, theme.primaryColor, !theme.showImages)} className={`relative h-7 w-12 rounded-full transition-colors ${theme.showImages ? 'bg-emerald-600' : 'bg-slate-300'}`}><span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-transform ${theme.showImages ? 'translate-x-6' : 'translate-x-1'}`} /></button></div>
+      </div>}</>}
     </div>
   );
 }

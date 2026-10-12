@@ -37,8 +37,13 @@ function isListIdConflict(failure: unknown): boolean {
   return code === '23505' || code === '42501';
 }
 
+function createClientId(): string {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  return uuid || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 function createOwnedListId(userId: string): string {
-  return `${userId}-list-${crypto.randomUUID()}`;
+  return `${userId}-list-${createClientId()}`;
 }
 
 function repairLocalListIds(list: ShoppingList, userId: string): void {
@@ -46,8 +51,8 @@ function repairLocalListIds(list: ShoppingList, userId: string): void {
   list.id = createOwnedListId(userId);
   list.ownerId = userId;
   list.accessRole = 'owner';
-  list.items = list.items.map(item => ({ ...item, id: `${userId}-item-${crypto.randomUUID()}` }));
-  list.travelEntries = (list.travelEntries || []).map(entry => ({ ...entry, id: `${userId}-travel-${crypto.randomUUID()}` }));
+  list.items = list.items.map(item => ({ ...item, id: `${userId}-item-${createClientId()}` }));
+  list.travelEntries = (list.travelEntries || []).map(entry => ({ ...entry, id: `${userId}-travel-${createClientId()}` }));
   if (getStoredActiveListId() === previousListId) saveActiveListId(list.id);
 }
 
@@ -66,7 +71,7 @@ function writeOfflineSync(lists: ShoppingList[], deletedListIds?: string[]): Off
   const payload: OfflineSyncPayload = {
     lists,
     deletedListIds: [...new Set(deletedListIds || current?.deletedListIds || [])],
-    revision: crypto.randomUUID(),
+    revision: createClientId(),
   };
   localStorage.setItem(OFFLINE_SYNC_KEY, JSON.stringify(payload));
   return payload;

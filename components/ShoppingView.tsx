@@ -8,7 +8,6 @@ import {
   Layers,
   ListFilter,
   ShoppingBag,
-  Trash2,
 } from 'lucide-react';
 import { ShoppingList, GroceryItem, CategoryId } from '@/types/grocery';
 import { getAllCategories } from '@/lib/categories';
@@ -42,7 +41,6 @@ export function ShoppingView({
   const [selectedCategory, setSelectedCategory] = useState<CategoryId | 'all'>('all');
   const [showCategoryListModal, setShowCategoryListModal] = useState(false);
   const [viewMode, setViewMode] = useState<'categories' | 'status'>('categories');
-  const [itemToDelete, setItemToDelete] = useState<GroceryItem | null>(null);
   const [deletedItem, setDeletedItem] = useState<{ item: GroceryItem; index: number } | null>(null);
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const categories = useMemo(() => getAllCategories(), []);
@@ -94,19 +92,13 @@ export function ShoppingView({
     if (undoTimer.current) clearTimeout(undoTimer.current);
   }, []);
 
-  // Solicita confirmação antes de excluir o item.
+  // Exclui e mantém uma janela curta para desfazer.
   const handleDeleteItem = (id: string) => {
-    const item = list.items.find(candidate => candidate.id === id);
-    if (item) setItemToDelete(item);
-  };
-
-  const confirmDeleteItem = () => {
-    if (!itemToDelete) return;
-    const index = list.items.findIndex(item => item.id === itemToDelete.id);
-    const removed = itemToDelete;
+    const index = list.items.findIndex(item => item.id === id);
+    if (index < 0) return;
+    const removed = list.items[index];
     const updated = list.items.filter(item => item.id !== removed.id);
     onUpdateList({ ...list, items: updated, updatedAt: Date.now() });
-    setItemToDelete(null);
     setDeletedItem({ item: removed, index: Math.max(index, 0) });
     if (undoTimer.current) clearTimeout(undoTimer.current);
     undoTimer.current = setTimeout(() => setDeletedItem(null), 7000);
@@ -472,21 +464,9 @@ export function ShoppingView({
         <span>Adicionar</span>
       </button>
 
-      {itemToDelete && <div className="fixed inset-0 z-60 bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setItemToDelete(null)}>
-        <div role="alertdialog" aria-modal="true" aria-labelledby="delete-market-item-title" className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl" onClick={event => event.stopPropagation()}>
-          <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-rose-100 text-rose-700"><Trash2 size={21} /></div>
-          <h2 id="delete-market-item-title" className="text-center text-base font-extrabold text-slate-900">Excluir item?</h2>
-          <p className="mt-1 text-center text-sm text-slate-500">“{itemToDelete.name}” será removido da lista.</p>
-          <div className="mt-5 grid grid-cols-2 gap-2">
-            <button type="button" onClick={() => setItemToDelete(null)} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold text-slate-700">Cancelar</button>
-            <button type="button" onClick={confirmDeleteItem} className="rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-rose-700">Excluir</button>
-          </div>
-        </div>
-      </div>}
-
-      {deletedItem && <div role="status" className="fixed bottom-20 left-1/2 z-70 flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 items-center gap-3 rounded-xl bg-slate-900 px-4 py-3 text-sm text-white shadow-2xl">
+      {deletedItem && <div role="status" className="app-undo-toast fixed bottom-20 left-1/2 z-70 flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 items-center gap-3 rounded-xl px-4 py-3 text-sm shadow-2xl">
         <span className="min-w-0 flex-1 truncate">“{deletedItem.item.name}” foi excluído.</span>
-        <button type="button" onClick={undoDeleteItem} className="shrink-0 font-extrabold text-emerald-300 hover:text-emerald-200">Desfazer</button>
+        <button type="button" onClick={undoDeleteItem} className="app-undo-toast__action shrink-0 font-extrabold">Desfazer</button>
       </div>}
 
       {/* Sticky Financial Dock (Dock inferior) */}

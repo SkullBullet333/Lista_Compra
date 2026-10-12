@@ -5,6 +5,7 @@ const THEME_KEY = 'fresh_market_theme_v1';
 export const DEFAULT_THEME: ThemePreferences = {
   mode: 'light',
   primaryColor: '#059669',
+  showImages: true,
 };
 
 export function getThemePreferences(): ThemePreferences {

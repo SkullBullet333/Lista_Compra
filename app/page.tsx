@@ -7,7 +7,7 @@ import { ShoppingView } from '@/components/ShoppingView';
 import { TravelView } from '@/components/TravelView';
 import { ListsManager } from '@/components/ListsManager';
 import { StatsView } from '@/components/StatsView';
-import { SettingsView } from '@/components/SettingsView';
+import { SettingsView, SettingsSection } from '@/components/SettingsView';
 import { ItemModal } from '@/components/ItemModal';
 import { ListEditModal } from '@/components/ListEditModal';
 import { ImagePreviewModal } from '@/components/ImagePreviewModal';
@@ -18,7 +18,9 @@ import {
   getStoredLists,
   saveLists,
   getStoredActiveListId,
+  getStoredNavigation,
   saveActiveListId,
+  saveNavigation,
   INITIAL_LISTS,
   saveItemConfig,
   recordItemPrice,
@@ -52,9 +54,11 @@ function useIsMounted() {
 }
 
 function ShoppingApp() {
+  const [restoredNavigation] = useState(() => getStoredNavigation());
   const [lists, setLists] = useState<ShoppingList[]>(() => getStoredLists());
-  const [activeListId, setActiveListId] = useState<string>(() => getStoredActiveListId());
-  const [activeTab, setActiveTab] = useState<'shopping' | 'lists' | 'stats' | 'settings'>('lists');
+  const [activeListId, setActiveListId] = useState<string>(() => restoredNavigation?.listId || getStoredActiveListId());
+  const [activeTab, setActiveTab] = useState<'shopping' | 'lists' | 'stats' | 'settings'>(() => restoredNavigation?.tab || 'lists');
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>('home');
   const [isNewListModalOpen, setIsNewListModalOpen] = useState(false);
   const [isProductPickerOpen, setIsProductPickerOpen] = useState(false);
   const [authReady, setAuthReady] = useState(!isSupabaseConfigured());
@@ -81,6 +85,10 @@ function ShoppingApp() {
     getCurrentSession().then(current => { setSession(current); setAuthReady(true); }).catch(() => setAuthReady(true));
     return onAuthSessionChange(current => { setSession(current); setAuthReady(true); });
   }, []);
+
+  useEffect(() => {
+    saveNavigation(activeTab, activeListId);
+  }, [activeTab, activeListId]);
 
   useEffect(() => {
     if (!session) return;
@@ -202,6 +210,12 @@ function ShoppingApp() {
         return;
       }
 
+      // Dentro de Configurações, primeiro volte para a lista de opções.
+      if (activeTab === 'settings' && settingsSection !== 'home') {
+        setSettingsSection('home');
+        return;
+      }
+
       // Prioridade 2: se estiver visualizando a lista ('shopping') ou estatísticas ('stats'), volta para 'lists'
       if (activeTab === 'shopping' || activeTab === 'stats' || activeTab === 'settings') {
         setActiveTab('lists');
@@ -235,6 +249,11 @@ function ShoppingApp() {
           return;
         }
 
+        if (activeTab === 'settings' && settingsSection !== 'home') {
+          setSettingsSection('home');
+          return;
+        }
+
         // Se estiver no shopping, tecla ESC volta para a tela de listas
         if (activeTab === 'shopping' || activeTab === 'stats' || activeTab === 'settings') {
           setActiveTab('lists');
@@ -257,6 +276,7 @@ function ShoppingApp() {
     isListEditModalOpen,
     previewImage,
     listToDelete,
+    settingsSection,
   ]);
 
   // Save to localStorage when lists update
@@ -629,7 +649,17 @@ function ShoppingApp() {
           setIsNewListModalOpen(true);
           window.history.pushState({ modal: 'newList' }, '');
         }}
-        onOpenSettings={() => handleSelectTab('settings')}
+        onOpenSettings={() => {
+          setSettingsSection('home');
+          handleSelectTab('settings');
+        }}
+        onBackFromSettings={() => {
+          if (settingsSection !== 'home') {
+            window.history.back();
+            return;
+          }
+          handleSelectTab('lists');
+        }}
         listTitle={activeList?.title}
         listType={activeList.type || 'market'}
         itemCount={activeList.type === 'travel' ? (activeList.travelEntries?.length || 0) : (activeList.items?.length || 0)}
@@ -639,6 +669,8 @@ function ShoppingApp() {
             window.history.pushState({ modal: 'listEdit' }, '');
           }
         }}
+        onDuplicateList={() => handleDuplicateList(activeList.id)}
+        onRequestDeleteList={() => setListToDelete(activeList)}
       />
       {syncNotice && <div role="status" className="fixed top-16 left-1/2 -translate-x-1/2 z-40 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-bold text-emerald-900 shadow-lg">{syncNotice}</div>}
 
@@ -689,10 +721,21 @@ function ShoppingApp() {
             onDuplicateList={handleDuplicateList}
             onDeleteList={handleDeleteList}
             onLoadTemplate={handleLoadTemplate}
+            onOpenNewModal={() => {
+              setIsNewListModalOpen(true);
+              if (typeof window !== 'undefined') {
+                window.history.pushState({ modal: 'newList' }, '');
+              }
+            }}
           />
         )}
 
-        {activeTab === 'settings' && <SettingsView userEmail={session?.user.email} onSignOut={() => { void signOut(); }} />}
+        {activeTab === 'settings' && <SettingsView userEmail={session?.user.email} onSignOut={() => { void signOut(); }} section={settingsSection} onSectionChange={section => {
+          setSettingsSection(section);
+          if (section !== 'home' && typeof window !== 'undefined') {
+            window.history.pushState({ screen: 'settings', settingsSection: section }, '');
+          }
+        }} />}
 
         {activeTab === 'stats' && (
           <StatsView
@@ -719,10 +762,6 @@ function ShoppingApp() {
         onSave={handleSaveListSettings}
         onUncheckAll={activeList.type === 'travel' ? undefined : handleUncheckAll}
         onClearChecked={activeList.type === 'travel' ? undefined : handleClearChecked}
-        onRequestDelete={() => {
-          setIsListEditModalOpen(false);
-          setListToDelete(activeList);
-        }}
       />
 
       <ImagePreviewModal

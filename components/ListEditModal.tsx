@@ -11,6 +11,7 @@ import {
   DollarSign,
   Mail,
   UserMinus,
+  ChevronRight,
   Users,
 } from 'lucide-react';
 import { ListCollaborator, ShoppingList } from '@/types/grocery';
@@ -51,6 +52,7 @@ function ListEditModalForm({
   const [collaborators, setCollaborators] = useState<ListCollaborator[]>([]);
   const [shareMessage, setShareMessage] = useState('');
   const [shareBusy, setShareBusy] = useState(false);
+  const [isSharingOpen, setIsSharingOpen] = useState(false);
 
   const refreshCollaborators = async () => {
     try { setCollaborators(await getListCollaborators(list.id)); } catch { setCollaborators([]); }
@@ -204,19 +206,25 @@ function ListEditModalForm({
             </div>
           </div>}
 
-          {list.accessRole === 'owner' && <div className="pt-2 border-t border-slate-100 space-y-2.5">
-            <div className="flex items-center gap-2"><Users size={16} className="text-emerald-700" /><span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Compartilhar lista</span></div>
-            <div className="grid grid-cols-[1fr_105px] gap-2">
-              <label className="relative"><Mail size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" /><input type="email" value={shareEmail} onChange={event => setShareEmail(event.target.value)} placeholder="email@exemplo.com" className="w-full rounded-xl border border-slate-300 pl-8 pr-3 py-2.5 text-sm" /></label>
-              <select value={shareRole} onChange={event => setShareRole(event.target.value as 'editor' | 'viewer')} className="rounded-xl border border-slate-300 px-2 py-2.5 text-xs font-semibold"><option value="editor">Pode editar</option><option value="viewer">Só visualizar</option></select>
-            </div>
-            <button type="button" disabled={shareBusy || !shareEmail.trim()} onClick={shareList} className="w-full rounded-xl bg-emerald-600 py-2.5 text-xs font-bold text-white disabled:opacity-50">{shareBusy ? 'Compartilhando...' : 'Compartilhar acesso'}</button>
-            {shareMessage && <p role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-900">{shareMessage}</p>}
-            {collaborators.length > 0 && <div className="space-y-1.5">
-              {collaborators.map(person => <div key={`${person.email}-${person.role}`} className="flex items-center gap-2 rounded-lg border border-slate-100 px-2.5 py-2">
-                <div className="min-w-0 flex-1"><p className="truncate text-xs font-semibold text-slate-800">{person.email}</p><p className="text-[10px] text-slate-500">{person.role === 'owner' ? 'Proprietário' : person.role === 'editor' ? 'Pode editar' : 'Somente leitura'}{person.status === 'pending' ? ' · convite pendente' : ''}</p></div>
-                {person.role !== 'owner' && <button type="button" onClick={async () => { await removeListCollaborator(list.id, person.email); await refreshCollaborators(); }} className="h-8 w-8 rounded-lg text-rose-600 hover:bg-rose-50 flex items-center justify-center" aria-label={`Remover acesso de ${person.email}`}><UserMinus size={15} /></button>}
-              </div>)}
+          {list.accessRole === 'owner' && <div className="pt-2 border-t border-slate-100">
+            <button type="button" onClick={() => setIsSharingOpen(open => !open)} aria-expanded={isSharingOpen} className="flex w-full items-center gap-3 rounded-xl px-1 py-2 text-left hover:bg-slate-50">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700"><Users size={17} /></span>
+              <span className="min-w-0 flex-1"><span className="block text-sm font-bold text-slate-800">Compartilhar lista</span><span className="block text-[11px] text-slate-500">{collaborators.length > 1 ? `${collaborators.length - 1} pessoa(s) com acesso` : 'Convide pessoas para colaborar'}</span></span>
+              <ChevronRight size={18} className={`text-slate-400 transition-transform ${isSharingOpen ? 'rotate-90' : ''}`} />
+            </button>
+            {isSharingOpen && <div className="mt-2 space-y-2.5 rounded-xl border border-slate-100 bg-slate-50/60 p-3">
+              <div className="grid grid-cols-[1fr_105px] gap-2">
+                <label className="relative"><Mail size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" /><input type="email" value={shareEmail} onChange={event => setShareEmail(event.target.value)} placeholder="email@exemplo.com" className="w-full rounded-xl border border-slate-300 pl-8 pr-3 py-2.5 text-sm" /></label>
+                <select value={shareRole} onChange={event => setShareRole(event.target.value as 'editor' | 'viewer')} className="rounded-xl border border-slate-300 px-2 py-2.5 text-xs font-semibold"><option value="editor">Pode editar</option><option value="viewer">Só visualizar</option></select>
+              </div>
+              <button type="button" disabled={shareBusy || !shareEmail.trim()} onClick={shareList} className="w-full rounded-xl bg-emerald-600 py-2.5 text-xs font-bold text-white disabled:opacity-50">{shareBusy ? 'Compartilhando...' : 'Compartilhar acesso'}</button>
+              {shareMessage && <p role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-900">{shareMessage}</p>}
+              {collaborators.length > 0 && <div className="space-y-1.5">
+                {collaborators.map(person => <div key={`${person.email}-${person.role}`} className="flex items-center gap-2 rounded-lg border border-slate-100 bg-white px-2.5 py-2">
+                  <div className="min-w-0 flex-1"><p className="truncate text-xs font-semibold text-slate-800">{person.email}</p><p className="text-[10px] text-slate-500">{person.role === 'owner' ? 'Proprietário' : person.role === 'editor' ? 'Pode editar' : 'Somente leitura'}{person.status === 'pending' ? ' · convite pendente' : ''}</p></div>
+                  {person.role !== 'owner' && <button type="button" onClick={async () => { await removeListCollaborator(list.id, person.email); await refreshCollaborators(); }} className="h-8 w-8 rounded-lg text-rose-600 hover:bg-rose-50 flex items-center justify-center" aria-label={`Remover acesso de ${person.email}`}><UserMinus size={15} /></button>}
+                </div>)}
+              </div>}
             </div>}
           </div>}
 

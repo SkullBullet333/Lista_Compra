@@ -3,6 +3,8 @@ import { CATALOG_PRESETS, guessCategory } from '@/lib/catalog';
 
 const STORAGE_KEY = 'fresh_market_shopping_lists_v1';
 const ACTIVE_LIST_KEY = 'fresh_market_active_list_id_v1';
+const LAST_NAVIGATION_KEY = 'fresh_market_last_navigation_v1';
+const LAST_NAVIGATION_MAX_AGE = 5 * 60 * 1000;
 const SAVED_CONFIGS_KEY = 'fresh_market_item_configs_v1';
 const PRICE_HISTORY_KEY = 'fresh_market_price_history_v1';
 
@@ -328,6 +330,40 @@ export function saveActiveListId(id: string) {
     localStorage.setItem(ACTIVE_LIST_KEY, id);
   } catch (e) {
     console.error('Failed to save active list id', e);
+  }
+}
+
+export type AppTab = 'shopping' | 'lists' | 'stats' | 'settings';
+
+export interface StoredNavigation {
+  tab: AppTab;
+  listId: string;
+  savedAt: number;
+}
+
+export function getStoredNavigation(): StoredNavigation | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const value = localStorage.getItem(LAST_NAVIGATION_KEY);
+    if (!value) return null;
+    const navigation = JSON.parse(value) as StoredNavigation;
+    const validTab = ['shopping', 'lists', 'stats', 'settings'].includes(navigation.tab);
+    if (!validTab || !navigation.listId || Date.now() - navigation.savedAt > LAST_NAVIGATION_MAX_AGE) {
+      localStorage.removeItem(LAST_NAVIGATION_KEY);
+      return null;
+    }
+    return navigation;
+  } catch {
+    return null;
+  }
+}
+
+export function saveNavigation(tab: AppTab, listId: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(LAST_NAVIGATION_KEY, JSON.stringify({ tab, listId, savedAt: Date.now() }));
+  } catch (error) {
+    console.error('Failed to save navigation state', error);
   }
 }
 

@@ -2,16 +2,17 @@
 
 import React, { useState } from 'react';
 import {
-  ShoppingCart,
-  Copy,
-  Trash2,
   Calendar,
+  Copy,
+  MoreVertical,
+  Trash2,
   Store,
   Sparkles,
   ArrowRight,
   Target,
   CheckCircle2,
   Plane,
+  Plus,
 } from 'lucide-react';
 import { ListType, ShoppingList } from '@/types/grocery';
 import { calculateListTotals, formatCurrency } from '@/lib/storage';
@@ -28,6 +29,7 @@ interface ListsManagerProps {
   onLoadTemplate: (templateType: string) => void;
   isNewModalOpen: boolean;
   onCloseNewModal: () => void;
+  onOpenNewModal: () => void;
 }
 
 export function ListsManager({
@@ -40,11 +42,11 @@ export function ListsManager({
   onLoadTemplate,
   isNewModalOpen,
   onCloseNewModal,
+  onOpenNewModal,
 }: ListsManagerProps) {
-  const [listToDelete, setListToDelete] = useState<ShoppingList | null>(null);
   const [newTitle, setNewTitle] = useState('');
   const [newType, setNewType] = useState<ListType>('market');
-  const [listFilter, setListFilter] = useState<ListType | 'all'>('all');
+  const [listFilter, setListFilter] = useState<ListType>('market');
   const [newMarket, setNewMarket] = useState('');
   const [newBudget, setNewBudget] = useState('');
   const templates = getTemplates();
@@ -55,6 +57,12 @@ export function ListsManager({
     setNewMarket('');
     setNewBudget('');
     onCloseNewModal();
+  };
+
+  const openNewModal = () => {
+    setNewType(listFilter);
+    setNewMarket('');
+    onOpenNewModal();
   };
 
   const handleCreateSubmit = (e: React.FormEvent) => {
@@ -68,14 +76,17 @@ export function ListsManager({
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 pb-28">
-      <div className="flex items-center gap-2 mb-5" aria-label="Filtrar listas por tipo">
-        {([['all', 'Todas'], ['market', 'Mercado'], ['travel', 'Viagem']] as const).map(([value, label]) => (
+      <div className="mb-5 flex items-center justify-between gap-3" aria-label="Filtrar listas por tipo">
+        <div className="flex items-center gap-2">
+        {([['market', 'Mercado'], ['travel', 'Viagem']] as const).map(([value, label]) => (
           <button key={value} type="button" onClick={() => setListFilter(value)} className={`rounded-full px-3 py-1.5 text-xs font-bold border ${listFilter === value ? 'bg-emerald-50 text-emerald-900 border-emerald-300' : 'bg-white text-slate-600 border-slate-200'}`}>{label}</button>
         ))}
+        </div>
+        <button type="button" onClick={openNewModal} className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-bold text-white shadow-xs transition-colors active:scale-95 ${listFilter === 'travel' ? 'bg-sky-600 hover:bg-sky-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}><Plus size={15} strokeWidth={2.5} />Novo</button>
       </div>
       {/* Grid of Shopping Lists */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-        {lists.filter(list => listFilter === 'all' || (list.type || 'market') === listFilter).map(list => {
+        {lists.filter(list => (list.type || 'market') === listFilter).map(list => {
           const totals = calculateListTotals(list.items);
           const isTravel = list.type === 'travel';
           const tripEntries = list.travelEntries || [];
@@ -119,28 +130,14 @@ export function ListsManager({
                     )}
                   </div>
 
-                  {/* Actions (Duplicate, Delete) */}
-                  <div
-                    className="flex items-center gap-1"
-                    onClick={e => e.stopPropagation()}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => onDuplicateList(list.id)}
-                      className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
-                      title="Duplicar lista"
-                    >
-                      <Copy size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setListToDelete(list)}
-                      className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
-                      title="Excluir lista"
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                  <div className="relative shrink-0" onClick={event => event.stopPropagation()}>
+                    <button type="button" onClick={() => setOpenListMenuId(current => current === list.id ? null : list.id)} aria-label={`Opções da lista ${list.title}`} aria-expanded={openListMenuId === list.id} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"><MoreVertical size={17} /></button>
+                    {openListMenuId === list.id && <div className="absolute right-0 top-full z-20 mt-1 w-40 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
+                      <button type="button" onClick={() => { setOpenListMenuId(null); onDuplicateList(list.id); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-bold text-slate-700 hover:bg-slate-50"><Copy size={15} />Duplicar</button>
+                      <button type="button" onClick={() => { setOpenListMenuId(null); setListToDelete(list); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-bold text-rose-700 hover:bg-rose-50"><Trash2 size={15} />Excluir</button>
+                    </div>}
                   </div>
+
                 </div>
 
                 {/* Progress bar */}
@@ -226,13 +223,6 @@ export function ListsManager({
 
             <form onSubmit={handleCreateSubmit} className="p-5 space-y-4">
               <div>
-                <span className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Tipo de lista</span>
-                <div className="grid grid-cols-2 gap-2">
-                  <button type="button" onClick={() => { setNewType('market'); setNewMarket(''); }} className={`rounded-xl border px-3 py-2.5 flex items-center justify-center gap-2 text-sm font-bold ${newType === 'market' ? 'border-emerald-500 bg-emerald-50 text-emerald-900' : 'border-slate-200 text-slate-600'}`}><ShoppingCart size={16} />Mercado</button>
-                  <button type="button" onClick={() => { setNewType('travel'); setNewMarket(''); }} className={`rounded-xl border px-3 py-2.5 flex items-center justify-center gap-2 text-sm font-bold ${newType === 'travel' ? 'border-sky-500 bg-sky-50 text-sky-900' : 'border-slate-200 text-slate-600'}`}><Plane size={16} />Viagem</button>
-                </div>
-              </div>
-              <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                   {newType === 'travel' ? 'Nome da Viagem' : 'Título da Lista'} <span className="text-rose-500">*</span>
                 </label>
@@ -296,7 +286,6 @@ export function ListsManager({
         </div>
       )}
 
-      {/* Modal de Confirmação de Exclusão (sem dependência de window.confirm) */}
       <DeleteConfirmModal
         isOpen={!!listToDelete}
         onClose={() => setListToDelete(null)}
@@ -310,6 +299,9 @@ export function ListsManager({
         itemCount={listToDelete?.type === 'travel' ? (listToDelete.travelEntries?.length || 0) : (listToDelete?.items?.length || 0)}
         listType={listToDelete?.type || 'market'}
       />
+
     </div>
   );
 }
+  const [listToDelete, setListToDelete] = useState<ShoppingList | null>(null);
+  const [openListMenuId, setOpenListMenuId] = useState<string | null>(null);
