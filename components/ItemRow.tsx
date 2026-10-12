@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Check, Trash2, Edit3, Plus, Minus, TrendingDown, TrendingUp } from 'lucide-react';
 import { GroceryItem } from '@/types/grocery';
 import { formatCurrency } from '@/lib/storage';
@@ -41,6 +41,10 @@ export function ItemRow({
   );
   const [swipeOffset, setSwipeOffset] = useState(0);
   const swipeStart = useRef<{ x: number; y: number; offset: number } | null>(null);
+
+  useEffect(() => {
+    setSwipeOffset(0);
+  }, [item.checked]);
 
   const handleTouchStart = (event: React.TouchEvent) => {
     const touch = event.touches[0];
@@ -113,7 +117,10 @@ export function ItemRow({
       {/* 1. Caixa de seleção */}
       <button
         type="button"
-        onClick={() => onToggleCheck(item.id)}
+        onClick={() => {
+          setSwipeOffset(0);
+          onToggleCheck(item.id);
+        }}
         className="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center shrink-0 focus:outline-none"
         aria-label={item.checked ? 'Desmarcar do carrinho' : 'Marcar no carrinho'}
       >
