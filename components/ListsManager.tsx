@@ -5,6 +5,7 @@ import {
   Calendar,
   Copy,
   MoreVertical,
+  Pencil,
   Trash2,
   Store,
   Sparkles,
@@ -26,10 +27,13 @@ interface ListsManagerProps {
   onCreateList: (title: string, type: ListType, location?: string, targetBudget?: number) => void;
   onDuplicateList: (id: string) => void;
   onDeleteList: (id: string) => void;
+  onEditList: (id: string) => void;
   onLoadTemplate: (templateType: string) => void;
   isNewModalOpen: boolean;
   onCloseNewModal: () => void;
   onOpenNewModal: () => void;
+  listFilter: ListType;
+  onFilterChange: (filter: ListType) => void;
 }
 
 export function ListsManager({
@@ -39,14 +43,18 @@ export function ListsManager({
   onCreateList,
   onDuplicateList,
   onDeleteList,
+  onEditList,
   onLoadTemplate,
   isNewModalOpen,
   onCloseNewModal,
   onOpenNewModal,
+  listFilter,
+  onFilterChange,
 }: ListsManagerProps) {
+  const [listToDelete, setListToDelete] = useState<ShoppingList | null>(null);
+  const [openListMenuId, setOpenListMenuId] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState('');
   const [newType, setNewType] = useState<ListType>('market');
-  const [listFilter, setListFilter] = useState<ListType>('market');
   const [newMarket, setNewMarket] = useState('');
   const [newBudget, setNewBudget] = useState('');
   const templates = getTemplates();
@@ -79,10 +87,10 @@ export function ListsManager({
       <div className="mb-5 flex items-center justify-between gap-3" aria-label="Filtrar listas por tipo">
         <div className="flex items-center gap-2">
         {([['market', 'Mercado'], ['travel', 'Viagem']] as const).map(([value, label]) => (
-          <button key={value} type="button" onClick={() => setListFilter(value)} className={`rounded-full px-3 py-1.5 text-xs font-bold border ${listFilter === value ? 'bg-emerald-50 text-emerald-900 border-emerald-300' : 'bg-white text-slate-600 border-slate-200'}`}>{label}</button>
+          <button key={value} type="button" onClick={() => onFilterChange(value)} className={`rounded-full px-3 py-1.5 text-xs font-bold border ${listFilter === value ? 'bg-emerald-50 text-emerald-900 border-emerald-300' : 'bg-white text-slate-600 border-slate-200'}`}>{label}</button>
         ))}
         </div>
-        <button type="button" onClick={openNewModal} className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-bold text-white shadow-xs transition-colors active:scale-95 ${listFilter === 'travel' ? 'bg-sky-600 hover:bg-sky-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}><Plus size={15} strokeWidth={2.5} />Novo</button>
+        <button type="button" onClick={openNewModal} className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-bold text-white shadow-xs transition-colors active:scale-95 ${listFilter === 'travel' ? 'travel-accent-bg hover:opacity-90' : 'bg-emerald-600 hover:bg-emerald-700'}`}><Plus size={15} strokeWidth={2.5} />Novo</button>
       </div>
       {/* Grid of Shopping Lists */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
@@ -113,12 +121,7 @@ export function ListsManager({
                       <h2 className="text-base font-extrabold text-slate-900 truncate">
                         {list.title}
                       </h2>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${isTravel ? 'bg-sky-100 text-sky-800' : 'bg-emerald-50 text-emerald-800'}`}>{isTravel ? 'Viagem' : 'Mercado'}</span>
-                      {isActive && (
-                        <span className="text-[10px] font-extrabold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full shrink-0">
-                          Ativa
-                        </span>
-                      )}
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${isTravel ? 'travel-accent-surface' : 'bg-emerald-50 text-emerald-800'}`}>{isTravel ? 'Viagem' : 'Mercado'}</span>
                       {list.accessRole && list.accessRole !== 'owner' && <span className="text-[10px] font-extrabold bg-sky-100 text-sky-800 px-2 py-0.5 rounded-full shrink-0">Compartilhada · {list.accessRole === 'editor' ? 'edição' : 'leitura'}</span>}
                     </div>
 
@@ -133,6 +136,7 @@ export function ListsManager({
                   <div className="relative shrink-0" onClick={event => event.stopPropagation()}>
                     <button type="button" onClick={() => setOpenListMenuId(current => current === list.id ? null : list.id)} aria-label={`Opções da lista ${list.title}`} aria-expanded={openListMenuId === list.id} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"><MoreVertical size={17} /></button>
                     {openListMenuId === list.id && <div className="absolute right-0 top-full z-20 mt-1 w-40 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
+                      <button type="button" onClick={() => { setOpenListMenuId(null); onEditList(list.id); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-bold text-slate-700 hover:bg-slate-50"><Pencil size={15} />Editar</button>
                       <button type="button" onClick={() => { setOpenListMenuId(null); onDuplicateList(list.id); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-bold text-slate-700 hover:bg-slate-50"><Copy size={15} />Duplicar</button>
                       <button type="button" onClick={() => { setOpenListMenuId(null); setListToDelete(list); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-bold text-rose-700 hover:bg-rose-50"><Trash2 size={15} />Excluir</button>
                     </div>}
@@ -150,7 +154,7 @@ export function ListsManager({
                   </div>
                   <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
                     <div
-                      className="bg-emerald-500 h-full rounded-full transition-all duration-300"
+                      className={`${isTravel ? 'travel-accent-bg' : 'bg-emerald-500'} h-full rounded-full transition-all duration-300`}
                       style={{ width: `${progress}%` }}
                     />
                   </div>
@@ -168,7 +172,7 @@ export function ListsManager({
                   </span>
                 </div>
 
-                <div className="flex items-center gap-1 text-xs font-bold text-emerald-700 group-hover:translate-x-0.5 transition-transform">
+                <div className={`flex items-center gap-1 text-xs font-bold group-hover:translate-x-0.5 transition-transform ${isTravel ? 'travel-accent-text' : 'text-emerald-700'}`}>
                   <span>{isTravel ? 'Abrir Viagem' : 'Abrir Lista'}</span>
                   <ArrowRight size={14} />
                 </div>
@@ -303,5 +307,3 @@ export function ListsManager({
     </div>
   );
 }
-  const [listToDelete, setListToDelete] = useState<ShoppingList | null>(null);
-  const [openListMenuId, setOpenListMenuId] = useState<string | null>(null);

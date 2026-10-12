@@ -5,6 +5,7 @@ const THEME_KEY = 'fresh_market_theme_v1';
 export const DEFAULT_THEME: ThemePreferences = {
   mode: 'light',
   primaryColor: '#059669',
+  travelColor: '#0284c7',
   showImages: true,
 };
 
@@ -23,6 +24,7 @@ export function applyTheme(preferences: ThemePreferences): void {
   const resolved = preferences.mode === 'system' ? (prefersDark ? 'dark' : 'light') : preferences.mode;
   document.documentElement.dataset.theme = resolved;
   document.documentElement.style.setProperty('--app-primary', preferences.primaryColor);
+  document.documentElement.style.setProperty('--app-travel-color', preferences.travelColor);
 }
 
 export function saveThemePreferences(preferences: ThemePreferences): void {

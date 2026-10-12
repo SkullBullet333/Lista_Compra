@@ -28,7 +28,18 @@ export function getAllCategories(): Record<string, Category> {
   ]);
 }
 
-export function makeCustomCategory(label: string, color: string): Category {
+const CATEGORY_COLORS = [
+  '#db2777', '#7c3aed', '#2563eb', '#0891b2', '#059669', '#65a30d',
+  '#ca8a04', '#ea580c', '#dc2626', '#be123c', '#4338ca', '#0f766e',
+  '#4f46e5', '#c026d3', '#e11d48', '#0284c7', '#16a34a', '#a16207',
+];
+
+export function makeCustomCategory(label: string, existingColors: string[]): Category {
+  const usedColors = new Set(existingColors.map(color => color.toLowerCase()));
+  const availableColors = CATEGORY_COLORS.filter(color => !usedColors.has(color.toLowerCase()));
+  const color = availableColors.length
+    ? availableColors[Math.floor(Math.random() * availableColors.length)]
+    : `hsl(${Math.floor(Math.random() * 360)} 72% 44%)`;
   return {
     id: `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
     label: label.trim(),

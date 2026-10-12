@@ -3,6 +3,7 @@
 :root {
   color-scheme: light;
   --app-primary: #059669;
+  --app-travel-color: #0284c7;
   --theme-bg: #f8fafc;
   --theme-surface: #ffffff;
   --theme-surface-raised: #ffffff;
@@ -52,10 +53,15 @@
 html, body { background-color: var(--theme-bg); color: var(--theme-text); }
 body { transition: background-color 160ms ease, color 160ms ease; }
 
-[class*="bg-emerald-600"] { background-color: var(--app-primary) !important; }
+[class*="bg-emerald-500"], [class*="bg-emerald-600"] { background-color: var(--app-primary) !important; }
 [class*="border-emerald-500"], [class*="border-emerald-600"] { border-color: var(--app-primary) !important; }
 [class*="text-emerald-700"], [class*="text-emerald-800"] { color: var(--app-primary) !important; }
 [class*="ring-emerald-500"] { --tw-ring-color: color-mix(in srgb, var(--app-primary) 35%, transparent) !important; }
+
+.travel-accent-bg { background-color: var(--app-travel-color) !important; }
+.travel-accent-text { color: var(--app-travel-color) !important; }
+.travel-accent-border { border-color: var(--app-travel-color) !important; }
+.travel-accent-surface { background-color: color-mix(in srgb, var(--app-travel-color) 12%, white) !important; color: color-mix(in srgb, var(--app-travel-color) 78%, #0f172a) !important; }
 
 :is([data-theme="dark"], [data-theme="black"]) body,
 :is([data-theme="dark"], [data-theme="black"]) .bg-\[\#f8fafc\] { background-color: var(--theme-bg) !important; color: var(--theme-text) !important; }
@@ -107,6 +113,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--app-primary); 
 :is([data-theme="dark"], [data-theme="black"]) [class*="hover:bg-slate-100"]:hover { background-color: var(--theme-muted) !important; }
 :is([data-theme="dark"], [data-theme="black"]) [class*="shadow-"] { --tw-shadow-color: var(--theme-shadow); }
 :is([data-theme="dark"], [data-theme="black"]) .backdrop-blur-xs { background-color: var(--theme-overlay); }
+
+:is([data-theme="dark"], [data-theme="black"]) .travel-accent-surface { background-color: color-mix(in srgb, var(--app-travel-color) 20%, var(--theme-surface)) !important; color: color-mix(in srgb, var(--app-travel-color) 55%, white) !important; }
 
 [data-theme="black"] header { background-color: rgba(9, 9, 9, .96) !important; }
 [data-theme="black"] [class*="shadow-[0_-4px"] { background-color: rgba(9, 9, 9, .97) !important; }

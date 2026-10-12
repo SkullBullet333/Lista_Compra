@@ -44,7 +44,17 @@ export function ShoppingView({
   const [deletedItem, setDeletedItem] = useState<{ item: GroceryItem; index: number } | null>(null);
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const categories = useMemo(() => getAllCategories(), []);
+  const availableCategories = useMemo(
+    () => (Object.keys(categories) as CategoryId[]).filter(categoryId => list.items.some(item => item.category === categoryId)),
+    [categories, list.items]
+  );
   const totals = useMemo(() => calculateListTotals(list.items), [list.items]);
+
+  useEffect(() => {
+    if (selectedCategory !== 'all' && !availableCategories.includes(selectedCategory)) {
+      setSelectedCategory('all');
+    }
+  }, [availableCategories, selectedCategory]);
 
   // Toggle item checked
   const handleToggleCheck = (id: string) => {
@@ -265,7 +275,7 @@ export function ShoppingView({
               </button>
 
               {/* Lista Vertical de Categorias */}
-              {(Object.keys(categories) as CategoryId[]).map(catKey => {
+              {availableCategories.map(catKey => {
                 const cat = categories[catKey];
                 const count = list.items.filter(i => i.category === catKey).length;
                 const isSelected = selectedCategory === catKey;
@@ -456,7 +466,7 @@ export function ShoppingView({
       <button
         type="button"
         onClick={onOpenProductPicker}
-        className="fixed bottom-20 right-4 sm:bottom-20 sm:right-6 z-40 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-extrabold text-sm sm:text-base px-5 py-3 sm:px-6 sm:py-3.5 rounded-full shadow-lg shadow-emerald-950/25 border border-emerald-500/40 ring-4 ring-emerald-500/15 flex items-center gap-2 transition-all cursor-pointer select-none"
+        className="fixed bottom-28 right-4 sm:bottom-28 sm:right-6 z-40 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-extrabold text-sm sm:text-base px-5 py-3 sm:px-6 sm:py-3.5 rounded-full shadow-lg shadow-emerald-950/25 border border-emerald-500/40 ring-4 ring-emerald-500/15 flex items-center gap-2 transition-all cursor-pointer select-none"
         title="Adicionar item à lista"
         aria-label="Adicionar item à lista"
       >
@@ -469,39 +479,25 @@ export function ShoppingView({
         <button type="button" onClick={undoDeleteItem} className="app-undo-toast__action shrink-0 font-extrabold">Desfazer</button>
       </div>}
 
-      {/* Sticky Financial Dock (Dock inferior) */}
-      <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/90 shadow-[0_-4px_16px_-2px_rgba(15,23,42,0.06),0_-2px_6px_-1px_rgba(15,23,42,0.03)]">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-2.5">
+      <div className="fixed bottom-8 left-0 right-0 z-40 border-t border-slate-200/90 bg-white/95 shadow-[0_-4px_16px_-2px_rgba(15,23,42,0.06),0_-2px_6px_-1px_rgba(15,23,42,0.03)] backdrop-blur-md sm:bottom-8">
+        <div className="max-w-4xl mx-auto px-4 py-2.5 sm:px-6">
           <div className="grid grid-cols-3 divide-x divide-slate-200">
             <div className="pr-2 sm:pr-4 flex flex-col justify-center">
-              <span className="text-[10px] sm:text-[11px] font-semibold text-slate-500 uppercase tracking-wider truncate">
-                Pendente
-              </span>
-              <span className="text-xs sm:text-sm font-bold text-slate-600 tabular-nums truncate">
-                {formatCurrency(totals.totalPending)}
-              </span>
+              <span className="text-[10px] sm:text-[11px] font-semibold text-slate-500 uppercase tracking-wider truncate">Pendente</span>
+              <span className="text-xs sm:text-sm font-bold text-slate-600 tabular-nums truncate">{formatCurrency(totals.totalPending)}</span>
             </div>
-
             <div className="px-2 sm:px-4 flex flex-col justify-center">
-              <span className="text-[10px] sm:text-[11px] font-semibold text-emerald-800 uppercase tracking-wider truncate">
-                No Carrinho
-              </span>
-              <span className="text-xs sm:text-sm font-extrabold text-emerald-700 tabular-nums truncate">
-                {formatCurrency(totals.totalInCart)}
-              </span>
+              <span className="text-[10px] sm:text-[11px] font-semibold text-emerald-800 uppercase tracking-wider truncate">No Carrinho</span>
+              <span className="text-xs sm:text-sm font-extrabold text-emerald-700 tabular-nums truncate">{formatCurrency(totals.totalInCart)}</span>
             </div>
-
             <div className="pl-2 sm:pl-4 flex flex-col justify-center">
-              <span className="text-[10px] sm:text-[11px] font-semibold text-slate-500 uppercase tracking-wider truncate">
-                Total Geral
-              </span>
-              <span className="text-sm sm:text-base font-extrabold text-slate-900 tabular-nums truncate">
-                {formatCurrency(totals.totalEstimated)}
-              </span>
+              <span className="text-[10px] sm:text-[11px] font-semibold text-slate-500 uppercase tracking-wider truncate">Total Geral</span>
+              <span className="text-sm sm:text-base font-extrabold text-slate-900 tabular-nums truncate">{formatCurrency(totals.totalEstimated)}</span>
             </div>
           </div>
         </div>
       </div>
+
     </div>
   );
 }

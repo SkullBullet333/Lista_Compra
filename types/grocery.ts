@@ -143,6 +143,7 @@ export type ThemeMode = 'light' | 'dark' | 'black' | 'system';
 export interface ThemePreferences {
   mode: ThemeMode;
   primaryColor: string;
+  travelColor: string;
   showImages: boolean;
 }
 

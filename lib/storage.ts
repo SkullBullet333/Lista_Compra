@@ -1,4 +1,4 @@
-import { ShoppingList, GroceryItem, ListTotals, SavedItemConfig, UnitType, CategoryId } from '@/types/grocery';
+import { ShoppingList, GroceryItem, ListTotals, SavedItemConfig, UnitType, CategoryId, ListType } from '@/types/grocery';
 import { CATALOG_PRESETS, guessCategory } from '@/lib/catalog';
 
 const STORAGE_KEY = 'fresh_market_shopping_lists_v1';
@@ -338,6 +338,7 @@ export type AppTab = 'shopping' | 'lists' | 'stats' | 'settings';
 export interface StoredNavigation {
   tab: AppTab;
   listId: string;
+  listFilter?: ListType;
   savedAt: number;
 }
 
@@ -358,10 +359,10 @@ export function getStoredNavigation(): StoredNavigation | null {
   }
 }
 
-export function saveNavigation(tab: AppTab, listId: string): void {
+export function saveNavigation(tab: AppTab, listId: string, listFilter: ListType = 'market'): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(LAST_NAVIGATION_KEY, JSON.stringify({ tab, listId, savedAt: Date.now() }));
+    localStorage.setItem(LAST_NAVIGATION_KEY, JSON.stringify({ tab, listId, listFilter, savedAt: Date.now() }));
   } catch (error) {
     console.error('Failed to save navigation state', error);
   }

@@ -58,6 +58,7 @@ function ShoppingApp() {
   const [lists, setLists] = useState<ShoppingList[]>(() => getStoredLists());
   const [activeListId, setActiveListId] = useState<string>(() => restoredNavigation?.listId || getStoredActiveListId());
   const [activeTab, setActiveTab] = useState<'shopping' | 'lists' | 'stats' | 'settings'>(() => restoredNavigation?.tab || 'lists');
+  const [listTypeFilter, setListTypeFilter] = useState<ListType>(() => restoredNavigation?.listFilter || 'market');
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('home');
   const [isNewListModalOpen, setIsNewListModalOpen] = useState(false);
   const [isProductPickerOpen, setIsProductPickerOpen] = useState(false);
@@ -87,8 +88,8 @@ function ShoppingApp() {
   }, []);
 
   useEffect(() => {
-    saveNavigation(activeTab, activeListId);
-  }, [activeTab, activeListId]);
+    saveNavigation(activeTab, activeListId, listTypeFilter);
+  }, [activeTab, activeListId, listTypeFilter]);
 
   useEffect(() => {
     if (!session) return;
@@ -301,6 +302,8 @@ function ShoppingApp() {
   // Switch active list (empurra estado para histórico do celular)
   const handleSelectList = (id: string) => {
     setIsProductPickerOpen(false);
+    const selectedList = lists.find(list => list.id === id);
+    setListTypeFilter(selectedList?.type || 'market');
     setActiveListId(id);
     saveActiveListId(id);
     setActiveTab('shopping');
@@ -641,6 +644,7 @@ function ShoppingApp() {
             setIsProductPickerOpen(false);
             window.history.replaceState({ screen: 'shopping', listId: activeList.id }, '');
           } else {
+            setListTypeFilter(activeList.type || 'market');
             handleSelectTab('lists');
           }
         }}
@@ -720,6 +724,14 @@ function ShoppingApp() {
             onCreateList={handleCreateList}
             onDuplicateList={handleDuplicateList}
             onDeleteList={handleDeleteList}
+            onEditList={id => {
+              setActiveListId(id);
+              saveActiveListId(id);
+              setIsListEditModalOpen(true);
+              if (typeof window !== 'undefined') {
+                window.history.pushState({ modal: 'listEdit' }, '');
+              }
+            }}
             onLoadTemplate={handleLoadTemplate}
             onOpenNewModal={() => {
               setIsNewListModalOpen(true);
@@ -727,6 +739,8 @@ function ShoppingApp() {
                 window.history.pushState({ modal: 'newList' }, '');
               }
             }}
+            listFilter={listTypeFilter}
+            onFilterChange={setListTypeFilter}
           />
         )}
 
