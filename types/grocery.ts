@@ -49,7 +49,7 @@ export const CATEGORIES: Record<BuiltInCategoryId, Category> = {
   },
   padaria: {
     id: 'padaria',
-    label: 'Padaria & Grãos',
+    label: 'Padaria',
     color: '#d97706',
     bgColor: '#fef3c7',
     borderColor: '#fde68a',
@@ -58,7 +58,7 @@ export const CATEGORIES: Record<BuiltInCategoryId, Category> = {
   },
   mercearia: {
     id: 'mercearia',
-    label: 'Mercearia & Despensa',
+    label: 'Mercado',
     color: '#ea580c',
     bgColor: '#ffedd5',
     borderColor: '#fed7aa',
@@ -67,7 +67,7 @@ export const CATEGORIES: Record<BuiltInCategoryId, Category> = {
   },
   carnes: {
     id: 'carnes',
-    label: 'Carnes & Frios',
+    label: 'Acougue',
     color: '#e11d48',
     bgColor: '#ffe4e6',
     borderColor: '#fecdd3',
@@ -103,7 +103,7 @@ export const CATEGORIES: Record<BuiltInCategoryId, Category> = {
   },
   outros: {
     id: 'outros',
-    label: 'Outros Itens',
+    label: 'Outros',
     color: '#475569',
     bgColor: '#f1f5f9',
     borderColor: '#e2e8f0',

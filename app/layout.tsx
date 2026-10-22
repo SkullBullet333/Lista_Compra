@@ -1,14 +1,6 @@
 import type {Metadata, Viewport} from 'next';
-import { Plus_Jakarta_Sans } from 'next/font/google';
 import { PwaRegistration } from '@/components/PwaRegistration';
 import './globals.css';
-
-const plusJakartaSans = Plus_Jakarta_Sans({
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700', '800'],
-  variable: '--font-sans',
-  display: 'swap',
-});
 
 export const metadata: Metadata = {
   applicationName: 'Minhas Listas',
@@ -48,7 +40,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({children}: {children: React.ReactNode}) {
   return (
-    <html lang="pt-BR" className={plusJakartaSans.variable}>
+    <html lang="pt-BR">
       <body className="font-sans antialiased bg-[#f8fafc] text-[#0f172a] min-h-screen selection:bg-emerald-100 selection:text-emerald-900" suppressHydrationWarning>
         <PwaRegistration />
         {children}

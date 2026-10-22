@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
 :root {
+  --font-sans: Arial, Helvetica, sans-serif;
   color-scheme: light;
   --app-primary: #059669;
   --app-travel-color: #0284c7;
