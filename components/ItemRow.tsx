@@ -101,8 +101,10 @@ export function ItemRow({
       <button
         type="button"
         onClick={() => { setSwipeOffset(0); onDelete(item.id); }}
-        className="absolute inset-y-0 right-0 flex w-[76px] items-center justify-center gap-1 bg-rose-600 text-xs font-bold text-white sm:hidden"
+        className={`absolute inset-y-0 right-0 w-[76px] items-center justify-center gap-1 bg-rose-600 text-xs font-bold text-white sm:hidden ${swipeOffset < 0 ? 'flex' : 'hidden'}`}
         aria-label={`Excluir ${item.name}`}
+        aria-hidden={swipeOffset === 0}
+        tabIndex={swipeOffset < 0 ? 0 : -1}
       >
         <Trash2 size={15} />
         <span>Excluir</span>
@@ -114,7 +116,7 @@ export function ItemRow({
         style={{ transform: `translateX(${swipeOffset}px)`, touchAction: 'pan-y' }}
         className={`group relative flex items-center gap-2 sm:gap-3 p-2 sm:p-3 sm:px-4 rounded-xl border transition-[transform,background-color,border-color,opacity] duration-150 ${
         item.checked
-          ? 'bg-slate-50/70 border-slate-200/60 opacity-80'
+          ? 'bg-slate-50 border-slate-200'
           : 'bg-white border-slate-200/90 hover:border-slate-300 shadow-xs'
         }`}
       >

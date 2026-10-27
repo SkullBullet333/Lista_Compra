@@ -1,9 +1,10 @@
 import { createClient, Session, SupabaseClient, User } from '@supabase/supabase-js';
+import { SHARED_CATALOG_EDIT } from '@/lib/catalog-mode';
 import { getCustomCategories } from '@/lib/categories';
 import { getThemePreferences } from '@/lib/preferences';
-import { getSavedItemConfigs, getPriceHistory, getStoredActiveListId, getStoredLists, saveActiveListId, saveLists } from '@/lib/storage';
-import { getTemplates } from '@/lib/templates';
-import { ListCollaborator, ShoppingList } from '@/types/grocery';
+import { getSavedItemConfigs, getPriceHistory, getStoredActiveListId, getStoredLists, markItemConfigSynced, replaceSavedItemConfigs, replaceSharedCatalogItems, saveActiveListId, saveLists } from '@/lib/storage';
+import { getDeletedTemplateIds, getStoredTemplateOverrides, replaceTemplatesFromSupabase } from '@/lib/templates';
+import { ListCollaborator, ListTemplate, SavedItemConfig, ShoppingList } from '@/types/grocery';
 
 let client: SupabaseClient | null | undefined;
 let backupTimer: ReturnType<typeof setTimeout> | undefined;
@@ -24,6 +25,9 @@ type SupabaseFailure = {
 
 function syncError(operation: string, failure: unknown): Error {
   const value = failure as SupabaseFailure | null;
+  if (operation.includes('modelo') && /is_deleted/i.test([value?.message, value?.details, value?.hint].join(' '))) {
+    return new Error('Atualize o banco com a migration 202610260001_template_crud.sql para sincronizar os modelos.');
+  }
   const parts = [value?.message, value?.details, value?.hint, value?.code ? `código ${value.code}` : ''].filter(Boolean);
   return new Error(`${operation}: ${parts.join(' · ') || 'erro desconhecido do Supabase'}`);
 }
@@ -178,6 +182,135 @@ export async function loadListsFromSupabase(): Promise<ShoppingList[]> {
   }));
 }
 
+export async function loadTemplatesFromSupabase(): Promise<void> {
+  const supabase = getSupabaseClient();
+  const session = await getCurrentSession();
+  if (!supabase || !session) return;
+  const { data: rows, error } = await supabase.from('list_templates').select('*').eq('user_id', session.user.id);
+  ensureSyncSucceeded('Não foi possível carregar os modelos', error);
+  const ids = (rows || []).filter(row => !row.is_deleted).map(row => row.id as string);
+  const { data: itemRows, error: itemsError } = ids.length
+    ? await supabase.from('template_items').select('*').in('template_id', ids).order('position')
+    : { data: [], error: null };
+  ensureSyncSucceeded('Não foi possível carregar os itens dos modelos', itemsError);
+  const prefix = `${session.user.id}:`;
+  const deletedIds = (rows || []).filter(row => row.is_deleted).map(row => (row.id as string).replace(prefix, ''));
+  const overrides: ListTemplate[] = (rows || []).filter(row => !row.is_deleted).map(row => ({
+    id: (row.id as string).replace(prefix, ''), name: row.name as string,
+    description: row.description as string, emoji: row.emoji as string,
+    marketName: (row.market_name as string | null) || undefined,
+    targetBudget: row.target_budget == null ? undefined : Number(row.target_budget),
+    createdAt: dateToNumber(row.created_at as string), updatedAt: dateToNumber(row.updated_at as string),
+    items: (itemRows || []).filter(item => item.template_id === row.id).map(item => ({
+      name: item.name as string, category: item.category_id as string, quantity: Number(item.quantity),
+      unit: item.unit as string, price: Number(item.default_price),
+      imageUrl: (item.image_url as string | null) || undefined, notes: (item.notes as string | null) || undefined,
+    })),
+  }));
+  replaceTemplatesFromSupabase(overrides, deletedIds);
+}
+
+export async function loadItemConfigsFromSupabase(): Promise<void> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return;
+  if (SHARED_CATALOG_EDIT) {
+    const { data, error } = await supabase.from('catalog_items')
+      .select('id,name,category_id,default_unit,default_price,image_url,notes,is_deleted,updated_at')
+      .is('user_id', null).order('name');
+    ensureSyncSucceeded('Não foi possível carregar o catálogo compartilhado', error);
+    replaceSharedCatalogItems((data || []).map(row => ({
+      name: String(row.name), catalogId: String(row.id), category: String(row.category_id),
+      unit: String(row.default_unit), defaultPrice: Number(row.default_price),
+      imageUrl: row.image_url || undefined, notes: row.notes || undefined,
+      deleted: Boolean(row.is_deleted), updatedAt: Date.parse(row.updated_at) || Date.now(),
+    })));
+    return;
+  }
+  const user = await requireUser(supabase);
+  const { data, error } = await supabase.from('catalog_items')
+    .select('id,name,category_id,default_unit,default_price,image_url,notes,is_deleted,updated_at')
+    .eq('user_id', user.id);
+  ensureSyncSucceeded('Não foi possível carregar os itens cadastrados', error);
+  if (!data?.length) return;
+  const configs: Record<string, SavedItemConfig> = {};
+  for (const row of data) {
+    const name = String(row.name);
+    configs[name.trim().toLocaleLowerCase('pt-BR')] = {
+      name,
+      catalogId: String(row.id),
+      category: String(row.category_id),
+      unit: String(row.default_unit),
+      defaultPrice: Number(row.default_price),
+      imageUrl: row.image_url || undefined,
+      notes: row.notes || undefined,
+      deleted: Boolean(row.is_deleted),
+      updatedAt: Date.parse(row.updated_at) || Date.now(),
+    };
+  }
+  replaceSavedItemConfigs(configs);
+  window.dispatchEvent(new Event('catalog-items-updated'));
+}
+
+export async function saveSharedCatalogItem(originalName: string | null, item: SavedItemConfig): Promise<void> {
+  if (!SHARED_CATALOG_EDIT) throw new Error('O catálogo compartilhado não está ativo.');
+  const supabase = getSupabaseClient();
+  if (!supabase || !navigator.onLine) throw new Error('Conecte-se à internet para editar o catálogo compartilhado.');
+  await requireUser(supabase);
+  const normalizedName = item.name.trim().toLocaleLowerCase('pt-BR');
+  const row = {
+    user_id: null, is_system: true, is_deleted: false, name: item.name.trim(),
+    normalized_name: normalizedName, category_id: item.category, default_unit: item.unit,
+    default_price: item.defaultPrice || 0, image_url: item.imageUrl || null, notes: item.notes || null,
+  };
+  if (originalName) {
+    const originalKey = originalName.trim().toLocaleLowerCase('pt-BR');
+    const { data: existing, error: lookupError } = await supabase.from('catalog_items').select('id')
+      .is('user_id', null).eq('normalized_name', originalKey).maybeSingle();
+    ensureSyncSucceeded('Não foi possível localizar o item original', lookupError);
+    if (existing) {
+      const { data, error } = await supabase.from('catalog_items').update(row)
+        .eq('id', existing.id).is('user_id', null).select('id').maybeSingle();
+      ensureSyncSucceeded(`Não foi possível editar o item "${originalName}"`, error);
+      if (!data) throw new Error('O item original não está mais disponível para edição.');
+      await loadItemConfigsFromSupabase();
+      return;
+    }
+    throw new Error('O item original não está mais no catálogo. Atualize a página antes de editar.');
+  }
+  const { error } = await supabase.from('catalog_items').upsert(row, { onConflict: 'user_id,normalized_name' });
+  ensureSyncSucceeded(`Não foi possível salvar o item "${item.name}"`, error);
+  await loadItemConfigsFromSupabase();
+}
+
+export async function deleteSharedCatalogItem(item: SavedItemConfig): Promise<void> {
+  if (!SHARED_CATALOG_EDIT) throw new Error('O catálogo compartilhado não está ativo.');
+  const supabase = getSupabaseClient();
+  if (!supabase || !navigator.onLine) throw new Error('Conecte-se à internet para excluir do catálogo compartilhado.');
+  await requireUser(supabase);
+  const { data, error } = await supabase.from('catalog_items').update({ is_deleted: true })
+    .is('user_id', null).eq('normalized_name', item.name.trim().toLocaleLowerCase('pt-BR'))
+    .select('id').maybeSingle();
+  ensureSyncSucceeded(`Não foi possível excluir o item "${item.name}"`, error);
+  if (!data) throw new Error('O item já não está no catálogo compartilhado.');
+  await loadItemConfigsFromSupabase();
+}
+
+export async function importSharedCatalogItems(items: SavedItemConfig[]): Promise<void> {
+  if (!SHARED_CATALOG_EDIT) throw new Error('O catálogo compartilhado não está ativo.');
+  const supabase = getSupabaseClient();
+  if (!supabase || !navigator.onLine) throw new Error('Conecte-se à internet para importar itens.');
+  await requireUser(supabase);
+  const rows = [...new Map(items.map(item => [item.name.trim().toLocaleLowerCase('pt-BR'), item])).values()].map(item => ({
+    user_id: null, is_system: true, is_deleted: false, name: item.name.trim(),
+    normalized_name: item.name.trim().toLocaleLowerCase('pt-BR'), category_id: item.category,
+    default_unit: item.unit, default_price: item.defaultPrice || 0,
+    image_url: item.imageUrl || null, notes: item.notes || null,
+  }));
+  const { error } = await supabase.from('catalog_items').upsert(rows, { onConflict: 'user_id,normalized_name', ignoreDuplicates: true });
+  ensureSyncSucceeded('Não foi possível importar os itens', error);
+  await loadItemConfigsFromSupabase();
+}
+
 async function requireUser(supabase: SupabaseClient): Promise<User> {
   const { data, error } = await supabase.auth.getUser();
   if (error || !data.user) throw error || new Error('Entre na sua conta para sincronizar.');
@@ -267,20 +400,46 @@ export async function backupAppData(lists: ShoppingList[]): Promise<boolean> {
   }
   const preferences = getThemePreferences();
   const categories = getCustomCategories();
-  const items = Object.values(getSavedItemConfigs());
-  const templates = getTemplates().filter(template => template.id.startsWith('custom-'));
+  const items = SHARED_CATALOG_EDIT ? [] : Object.values(getSavedItemConfigs()).sort((a, b) => Number(Boolean(a.deleted)) - Number(Boolean(b.deleted)));
+  const templates = getStoredTemplateOverrides();
+  const deletedTemplateIds = getDeletedTemplateIds();
   const prices = getPriceHistory();
   if (categories.length) {
     const { error } = await supabase.from('categories').upsert(categories.map(category => ({ id: `${user.id}:${category.id}`, user_id: user.id, name: category.label, color: category.color, is_system: false })));
     ensureSyncSucceeded('Não foi possível salvar as categorias', error);
   }
-  if (items.length) {
-    const { error } = await supabase.from('catalog_items').upsert(items.map(item => ({ user_id: user.id, name: item.name, normalized_name: item.name.trim().toLocaleLowerCase('pt-BR'), category_id: item.category, default_unit: item.unit, default_price: item.defaultPrice || 0, image_url: item.imageUrl || null, notes: item.notes || null })), { onConflict: 'user_id,normalized_name' });
-    ensureSyncSucceeded('Não foi possível salvar os produtos cadastrados', error);
+  for (const item of items) {
+    const row = {
+      user_id: user.id, name: item.name, normalized_name: item.name.trim().toLocaleLowerCase('pt-BR'),
+      category_id: item.category, default_unit: item.unit, default_price: item.defaultPrice || 0,
+      image_url: item.imageUrl || null, notes: item.notes || null, is_deleted: Boolean(item.deleted),
+    };
+    let rowId = item.catalogId;
+    if (!item.deleted && !rowId && item.previousName) {
+      const { data, error } = await supabase.from('catalog_items').select('id')
+        .eq('user_id', user.id).eq('normalized_name', item.previousName.trim().toLocaleLowerCase('pt-BR')).maybeSingle();
+      ensureSyncSucceeded('Não foi possível localizar o item original', error);
+      rowId = data?.id;
+    }
+    let savedId: string | undefined;
+    if (!item.deleted && rowId) {
+      const { data, error } = await supabase.from('catalog_items').update(row)
+        .eq('id', rowId).eq('user_id', user.id).select('id').maybeSingle();
+      ensureSyncSucceeded(`Não foi possível editar o item "${item.name}"`, error);
+      savedId = data?.id;
+    }
+    if (!savedId) {
+      const { data, error } = await supabase.from('catalog_items').upsert(row, { onConflict: 'user_id,normalized_name' })
+        .select('id').single();
+      ensureSyncSucceeded(`Não foi possível salvar o item "${item.name}"`, error);
+      if (!data?.id) throw new Error(`Não foi possível confirmar o item "${item.name}" no Supabase.`);
+      savedId = data.id;
+    }
+    if (!item.deleted && savedId) markItemConfigSynced(item.name, savedId);
   }
   for (const template of templates) {
     const templateId = `${user.id}:${template.id}`;
-    const { error: templateError } = await supabase.from('list_templates').upsert({ id: templateId, user_id: user.id, name: template.name, description: template.description, emoji: template.emoji, market_name: template.marketName || null, target_budget: template.targetBudget ?? null, is_system: false });
+    const { error: templateError } = await supabase.from('list_templates').upsert({ id: templateId, user_id: user.id, name: template.name, description: template.description, emoji: template.emoji, market_name: template.marketName || null, target_budget: template.targetBudget ?? null, is_system: false, is_deleted: false });
     ensureSyncSucceeded(`Não foi possível salvar o modelo "${template.name}"`, templateError);
     const { error: deleteTemplateItemsError } = await supabase.from('template_items').delete().eq('template_id', templateId).eq('user_id', user.id);
     ensureSyncSucceeded(`Não foi possível atualizar os itens do modelo "${template.name}"`, deleteTemplateItemsError);
@@ -288,6 +447,16 @@ export async function backupAppData(lists: ShoppingList[]): Promise<boolean> {
       const { error: templateItemsError } = await supabase.from('template_items').insert(template.items.map((item, position) => ({ template_id: templateId, user_id: user.id, name: item.name, category_id: item.category, quantity: item.quantity, unit: item.unit, default_price: item.price, image_url: item.imageUrl || null, notes: item.notes || null, position })));
       ensureSyncSucceeded(`Não foi possível salvar os itens do modelo "${template.name}"`, templateItemsError);
     }
+  }
+  for (const id of deletedTemplateIds) {
+    const templateId = `${user.id}:${id}`;
+    const { error } = await supabase.from('list_templates').upsert({
+      id: templateId, user_id: user.id, name: id, description: '', emoji: '🛒',
+      market_name: null, target_budget: null, is_system: false, is_deleted: true,
+    });
+    ensureSyncSucceeded(`Não foi possível excluir o modelo "${id}"`, error);
+    const { error: itemsError } = await supabase.from('template_items').delete().eq('template_id', templateId).eq('user_id', user.id);
+    ensureSyncSucceeded(`Não foi possível excluir os itens do modelo "${id}"`, itemsError);
   }
   if (prices.length) {
     const { error } = await supabase.from('price_history').upsert(prices.map(entry => ({ id: `${user.id}:${entry.id}`, user_id: user.id, list_id: lists.some(list => list.id === entry.listId) ? entry.listId : null, item_name: entry.itemName, normalized_name: entry.normalizedName, unit_price: entry.price, market_name: entry.marketName || null, recorded_at: new Date(entry.recordedAt).toISOString() })));
@@ -315,7 +484,7 @@ export function scheduleSupabaseBackup(lists: ShoppingList[]): void {
   backupTimer = setTimeout(() => {
     flushPendingSupabaseBackup().catch(error => {
       const failure = error instanceof Error ? error : syncError('Falha ao sincronizar com o Supabase', error);
-      console.error(failure.message);
+      window.dispatchEvent(new CustomEvent<string>('supabase-sync-error', { detail: failure.message }));
     });
   }, 450);
 }
@@ -333,6 +502,7 @@ export async function flushPendingSupabaseBackup(): Promise<boolean> {
   }
   const latest = readOfflineSync();
   if (latest?.revision === pending.revision) localStorage.removeItem(OFFLINE_SYNC_KEY);
+  window.dispatchEvent(new Event('supabase-sync-success'));
   return true;
 }
 
@@ -346,6 +516,9 @@ export function subscribeToListChanges(onChange: () => void): () => void {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'list_items' }, refresh)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'travel_entries' }, refresh)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'list_members' }, refresh)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'catalog_items' }, refresh)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'list_templates' }, refresh)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'template_items' }, refresh)
     .subscribe();
   return () => { if (refreshTimer) clearTimeout(refreshTimer); void supabase.removeChannel(channel); };
 }

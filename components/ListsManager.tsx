@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Calendar,
   Copy,
@@ -57,7 +57,13 @@ export function ListsManager({
   const [newType, setNewType] = useState<ListType>('market');
   const [newMarket, setNewMarket] = useState('');
   const [newBudget, setNewBudget] = useState('');
-  const templates = getTemplates();
+  const [templates, setTemplates] = useState(getTemplates);
+
+  useEffect(() => {
+    const refresh = () => setTemplates(getTemplates());
+    window.addEventListener('templates-updated', refresh);
+    return () => window.removeEventListener('templates-updated', refresh);
+  }, []);
 
   const closeNewModal = () => {
     setNewTitle('');
@@ -117,10 +123,10 @@ export function ListsManager({
                 {/* List Header */}
                 <div className="flex items-start justify-between gap-2 mb-2">
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h2 className="text-base font-extrabold text-slate-900 truncate">
-                        {list.title}
-                      </h2>
+                    <h2 className="text-base font-extrabold text-slate-900 truncate">
+                      {list.title}
+                    </h2>
+                    <div className="flex flex-wrap items-center gap-2 mt-1">
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${isTravel ? 'travel-accent-surface' : 'bg-emerald-50 text-emerald-800'}`}>{isTravel ? 'Viagem' : 'Mercado'}</span>
                       {list.accessRole && list.accessRole !== 'owner' && <span className="text-[10px] font-extrabold bg-sky-100 text-sky-800 px-2 py-0.5 rounded-full shrink-0">Compartilhada · {list.accessRole === 'editor' ? 'edição' : 'leitura'}</span>}
                     </div>

@@ -1,20 +1,62 @@
 'use client';
 
-import React, { useRef, useState } from 'react';
-import { Check, ChevronRight, Circle, Cloud, Download, Eye, EyeOff, FileSpreadsheet, LayoutTemplate, LogOut, Moon, PackagePlus, Palette, Sun, Tags, Upload } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Check, ChevronRight, Circle, Cloud, Download, Eye, EyeOff, FileSpreadsheet, LayoutTemplate, LogOut, Moon, PackagePlus, Palette, Search, Sun, Tags, Trash2, Upload } from 'lucide-react';
 import { Category, CategoryId, ListTemplate, SavedItemConfig, ThemeMode } from '@/types/grocery';
+import { SHARED_CATALOG_EDIT } from '@/lib/catalog-mode';
 import { getAllCategories, getCustomCategories, makeCustomCategory, saveCustomCategories } from '@/lib/categories';
-import { deleteItemConfig, getRegisteredItems, getSavedItemConfigs, saveItemConfig } from '@/lib/storage';
+import { deleteItemConfig, formatCurrency, getEditableItemConfigs, getRegisteredItems, getStoredLists, saveEditedItemConfig, saveItemConfig } from '@/lib/storage';
 import { applyTheme, getThemePreferences, saveThemePreferences } from '@/lib/preferences';
-import { getTemplates, saveTemplate } from '@/lib/templates';
-import { backupAppData, scheduleSupabaseBackup } from '@/lib/supabase';
-import { getStoredLists } from '@/lib/storage';
+import { deleteTemplate, getTemplates, saveTemplate } from '@/lib/templates';
+import { backupAppData, deleteSharedCatalogItem, importSharedCatalogItems, saveSharedCatalogItem, scheduleSupabaseBackup } from '@/lib/supabase';
 
 export type SettingsSection = 'home' | 'categories' | 'items' | 'templates' | 'appearance';
 
 function currentTimestamp() {
   return Date.now();
 }
+
+function normalizeItemSearch(value: string) {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR');
+}
+
+function normalizeImportKey(value: string) {
+  return normalizeItemSearch(value.trim().replace(/\s+/g, ' '));
+}
+
+function formatImportedName(value: string) {
+  const lowercaseWords = new Set(['a', 'as', 'o', 'os', 'de', 'da', 'das', 'do', 'dos', 'e', 'em', 'na', 'nas', 'no', 'nos', 'com', 'para', 'por']);
+  return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase('pt-BR').split(' ')
+    .map((word, index) => index > 0 && lowercaseWords.has(word)
+      ? word
+      : word.replace(/^\p{L}/u, letter => letter.toLocaleUpperCase('pt-BR')))
+    .join(' ');
+}
+
+function formatImportedDescription(value: string) {
+  const text = value.trim().replace(/\s+/g, ' ').toLocaleLowerCase('pt-BR');
+  return text.replace(/^\p{L}/u, letter => letter.toLocaleUpperCase('pt-BR'));
+}
+
+function findImportedCategory(categories: Record<string, Category>, value: string) {
+  const key = normalizeImportKey(value);
+  const matches = Object.values(categories).find(category => normalizeImportKey(category.id) === key || normalizeImportKey(category.label) === key);
+  if (matches) return matches;
+  const previousLabels: Record<string, string> = {
+    'feira & hortifruti': 'feira',
+    'padaria & graos': 'padaria',
+    'mercearia & despensa': 'mercearia',
+    'carnes & frios': 'carnes',
+    acougue: 'carnes',
+    'outros itens': 'outros',
+  };
+  return categories[previousLabels[key]];
+}
+
+type IgnoredImportRow = { label: string; reason: string };
+type ImportPreview =
+  | { kind: 'items'; fileName: string; items: SavedItemConfig[]; ignored: IgnoredImportRow[] }
+  | { kind: 'templates'; fileName: string; templates: ListTemplate[]; ignored: IgnoredImportRow[] };
 
 export function SettingsView({ userEmail, onSignOut, section: controlledSection, onSectionChange }: { userEmail?: string; onSignOut?: () => void; section?: SettingsSection; onSectionChange?: (section: SettingsSection) => void }) {
   const [internalSection, setInternalSection] = useState<SettingsSection>('home');
@@ -24,7 +66,8 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
     onSectionChange?.(nextSection);
   };
   const [customCategories, setCustomCategories] = useState(getCustomCategories);
-  const [savedItems, setSavedItems] = useState(() => Object.values(getSavedItemConfigs()).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')));
+  const [savedItems, setSavedItems] = useState(getEditableItemConfigs);
+  const [itemSearch, setItemSearch] = useState('');
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
   const [isCategoryEditorOpen, setIsCategoryEditorOpen] = useState(false);
   const [categoryName, setCategoryName] = useState('');
@@ -33,21 +76,46 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
   const categoryTouchStart = useRef<number | null>(null);
   const [itemName, setItemName] = useState('');
   const [editingItemName, setEditingItemName] = useState<string | null>(null);
+  const [itemToDelete, setItemToDelete] = useState<SavedItemConfig | null>(null);
   const [itemCategory, setItemCategory] = useState<CategoryId>('feira');
   const [itemUnit, setItemUnit] = useState('un');
   const [itemPrice, setItemPrice] = useState('');
   const [itemNotes, setItemNotes] = useState('');
   const [isImportingItems, setIsImportingItems] = useState(false);
   const [isImportingTemplates, setIsImportingTemplates] = useState(false);
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
+  const [isSavingImport, setIsSavingImport] = useState(false);
+  const [importError, setImportError] = useState('');
   const [notice, setNotice] = useState('');
   const [templates, setTemplates] = useState(getTemplates);
   const [templateName, setTemplateName] = useState('');
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
+  const [templateToDelete, setTemplateToDelete] = useState<ListTemplate | null>(null);
   const [templateDescription, setTemplateDescription] = useState('');
   const [templateEmoji, setTemplateEmoji] = useState('🛒');
+  const [templateMarketName, setTemplateMarketName] = useState('');
+  const [templateBudget, setTemplateBudget] = useState('');
   const [templateItems, setTemplateItems] = useState<string[]>([]);
   const [theme, setTheme] = useState(getThemePreferences);
   const categories = getAllCategories();
   const registeredItems = getRegisteredItems();
+  const searchTerm = normalizeItemSearch(itemSearch.trim());
+  const filteredSavedItems = searchTerm
+    ? savedItems.filter(item => [item.name, item.category, categories[item.category]?.label || 'Outros Itens']
+      .some(value => normalizeItemSearch(value).includes(searchTerm)))
+    : savedItems;
+
+  useEffect(() => {
+    const refresh = () => setSavedItems(getEditableItemConfigs());
+    window.addEventListener('catalog-items-updated', refresh);
+    return () => window.removeEventListener('catalog-items-updated', refresh);
+  }, []);
+
+  useEffect(() => {
+    const refresh = () => setTemplates(getTemplates());
+    window.addEventListener('templates-updated', refresh);
+    return () => window.removeEventListener('templates-updated', refresh);
+  }, []);
 
   const saveCategory = (event: React.FormEvent) => {
     event.preventDefault();
@@ -90,13 +158,19 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
     scheduleSupabaseBackup(getStoredLists());
   };
 
-  const saveItem = (event: React.FormEvent) => {
+  const saveItem = async (event: React.FormEvent) => {
     event.preventDefault();
     const name = itemName.trim();
     if (!name) return;
+    const normalizedName = name.toLocaleLowerCase('pt-BR');
+    if (editingItemName && normalizedName !== editingItemName.toLocaleLowerCase('pt-BR') &&
+      getEditableItemConfigs().some(item => item.name.toLocaleLowerCase('pt-BR') === normalizedName)) {
+      setNotice('Já existe um item com esse nome.');
+      return;
+    }
     const normalizedPrice = itemPrice.includes(',') ? itemPrice.replace(/\./g, '').replace(',', '.') : itemPrice;
     const parsedPrice = Number(normalizedPrice);
-    const originalConfig = getSavedItemConfigs()[(editingItemName || name).toLocaleLowerCase('pt-BR')];
+    const originalConfig = getEditableItemConfigs().find(item => item.name.toLocaleLowerCase('pt-BR') === (editingItemName || name).toLocaleLowerCase('pt-BR'));
     const config: SavedItemConfig = {
       name,
       category: itemCategory,
@@ -106,19 +180,27 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
       imageUrl: originalConfig?.imageUrl,
       updatedAt: Date.now(),
     };
-    if (editingItemName && editingItemName.toLocaleLowerCase('pt-BR') !== name.toLocaleLowerCase('pt-BR')) {
-      deleteItemConfig(editingItemName);
+    if (SHARED_CATALOG_EDIT) {
+      try {
+        setNotice('Salvando no catálogo compartilhado...');
+        await saveSharedCatalogItem(editingItemName, config);
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : 'Não foi possível salvar o item.');
+        return;
+      }
+    } else {
+      if (editingItemName) saveEditedItemConfig(editingItemName, config);
+      else saveItemConfig(config);
+      scheduleSupabaseBackup(getStoredLists());
     }
-    saveItemConfig(config);
-    setSavedItems(Object.values(getSavedItemConfigs()).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')));
+    setSavedItems(getEditableItemConfigs());
     setItemName('');
     setEditingItemName(null);
     setItemCategory('feira');
     setItemUnit('un');
     setItemPrice('');
     setItemNotes('');
-    setNotice('Item salvo e disponível ao adicionar produtos à lista.');
-    scheduleSupabaseBackup(getStoredLists());
+    setNotice(editingItemName ? 'Item atualizado.' : 'Item cadastrado e disponível ao adicionar produtos à lista.');
   };
 
   const editItem = (item: SavedItemConfig) => {
@@ -132,13 +214,42 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
     setNotice('');
   };
 
+  const deleteSavedItem = async (item: SavedItemConfig) => {
+    if (SHARED_CATALOG_EDIT) {
+      try {
+        setNotice('Excluindo do catálogo compartilhado...');
+        await deleteSharedCatalogItem(item);
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : 'Não foi possível excluir o item.');
+        return;
+      }
+    } else {
+      deleteItemConfig(item.name);
+      scheduleSupabaseBackup(getStoredLists());
+    }
+    setSavedItems(getEditableItemConfigs());
+    if (editingItemName?.toLocaleLowerCase('pt-BR') === item.name.toLocaleLowerCase('pt-BR')) {
+      setEditingItemName(null);
+      setItemName('');
+      setItemCategory('feira');
+      setItemUnit('un');
+      setItemPrice('');
+      setItemNotes('');
+    }
+    setItemToDelete(null);
+    setNotice(`Item "${item.name}" excluído.`);
+  };
+
   const downloadItemImportExample = async () => {
     const XLSX = await import('xlsx');
     const workbook = XLSX.utils.book_new();
-    const worksheet = XLSX.utils.json_to_sheet([
-      { Nome: 'Arroz', valor: 25.9, categoria: 'Mercearia & Despensa', fator: 'pct' },
-      { Nome: 'Leite integral', valor: 6.5, categoria: 'Laticínios', fator: 'un' },
-    ]);
+    const worksheet = XLSX.utils.aoa_to_sheet([['Nome', 'valor', 'categoria', 'fator']]);
+    XLSX.utils.sheet_add_json(worksheet, getEditableItemConfigs().map(item => ({
+      Nome: item.name,
+      valor: item.defaultPrice ?? 0,
+      categoria: categories[item.category]?.label || 'Outros Itens',
+      fator: item.unit,
+    })), { origin: 'A2', skipHeader: true });
     worksheet['!cols'] = [{ wch: 28 }, { wch: 14 }, { wch: 26 }, { wch: 12 }];
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Itens');
     XLSX.writeFile(workbook, 'modelo-itens-cadastrados.xlsx');
@@ -156,62 +267,63 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
   const importItemsFromSpreadsheet = async (file?: File) => {
     if (!file) return;
     setIsImportingItems(true);
-    setNotice('Importando itens...');
+    setNotice('Lendo planilha de itens...');
     try {
       const XLSX = await import('xlsx');
       const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: '' });
-      const normalizeHeader = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+      const normalizeHeader = normalizeImportKey;
       const headers = new Set(rows.flatMap(row => Object.keys(row).map(normalizeHeader)));
       if (!['nome', 'valor', 'categoria', 'fator'].every(header => headers.has(header))) {
         setNotice('A planilha precisa das colunas Nome, valor, categoria e fator. Baixe o modelo para começar.');
         return;
       }
-      const existingItems = getSavedItemConfigs();
+      const existingItems = new Set(getEditableItemConfigs().map(item => normalizeImportKey(item.name)));
       const preparedItems: SavedItemConfig[] = [];
-      const invalidCategories: string[] = [];
+      const ignored: IgnoredImportRow[] = [];
 
       rows.forEach((row, index) => {
         const entries = Object.entries(row);
         const valueFor = (header: string) => entries.find(([key]) => normalizeHeader(key) === header)?.[1];
-        const name = String(valueFor('nome') ?? '').trim();
-        if (!name) return;
-        const key = name.toLocaleLowerCase('pt-BR');
-        const previous = existingItems[key];
-        const importedCategory = String(valueFor('categoria') ?? '').trim();
-        const normalizedCategory = normalizeHeader(importedCategory);
-        const category = Object.values(categories).find(candidate => normalizeHeader(candidate.id) === normalizedCategory || normalizeHeader(candidate.label) === normalizedCategory)?.id;
-        if (!category) {
-          invalidCategories.push(`linha ${index + 2}: ${importedCategory || 'categoria vazia'}`);
+        const rawName = String(valueFor('nome') ?? '').trim();
+        if (!rawName) {
+          if (entries.some(([, value]) => String(value ?? '').trim())) ignored.push({ label: `Linha ${index + 2}`, reason: 'Nome vazio' });
           return;
         }
-        const unit = String(valueFor('fator') ?? '').trim() || previous?.unit || 'un';
+        const key = normalizeImportKey(rawName);
+        if (existingItems.has(key)) {
+          ignored.push({ label: rawName, reason: 'Item já cadastrado ou repetido na planilha' });
+          return;
+        }
+        const name = formatImportedName(rawName);
+        const importedCategory = String(valueFor('categoria') ?? '').trim();
+        const category = findImportedCategory(categories, importedCategory)?.id;
+        if (!category) {
+          ignored.push({ label: name, reason: `Categoria não cadastrada: ${importedCategory || 'vazia'}` });
+          return;
+        }
+        const rawUnit = String(valueFor('fator') ?? '').trim().toLocaleLowerCase('pt-BR');
+        const unit = rawUnit === 'l' ? 'L' : rawUnit || 'un';
         preparedItems.push({
           name,
           category,
           unit,
           defaultPrice: readImportedPrice(valueFor('valor')),
-          notes: previous?.notes,
-          imageUrl: previous?.imageUrl,
           updatedAt: Date.now(),
         });
+        existingItems.add(key);
       });
 
-      if (invalidCategories.length) {
-        setNotice(`Importação cancelada: categoria não cadastrada (${invalidCategories.slice(0, 3).join('; ')}).`);
+      if (!preparedItems.length && !ignored.length) {
+        setNotice('A planilha não contém itens para revisar.');
         return;
       }
-      if (!preparedItems.length) {
-        setNotice('Nenhum item foi importado. Use as colunas Nome, valor, categoria e fator.');
-        return;
-      }
-      preparedItems.forEach(saveItemConfig);
-      setSavedItems(Object.values(getSavedItemConfigs()).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')));
-      scheduleSupabaseBackup(getStoredLists());
-      setNotice(`${preparedItems.length} ${preparedItems.length === 1 ? 'item importado' : 'itens importados'} com sucesso.`);
-    } catch {
-      setNotice('Não foi possível ler a planilha. Use um arquivo Excel .xlsx com as colunas Nome, valor, categoria e fator.');
+      setImportPreview({ kind: 'items', fileName: file.name, items: preparedItems, ignored });
+      setImportError('');
+      setNotice('');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Não foi possível ler a planilha Excel.');
     } finally {
       setIsImportingItems(false);
     }
@@ -220,25 +332,44 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
   const downloadTemplateImportExample = async () => {
     const XLSX = await import('xlsx');
     const workbook = XLSX.utils.book_new();
-    const worksheet = XLSX.utils.json_to_sheet([
-      { Lista: 'Café da manhã', descrição: 'Itens para a semana', ícone: '☕', Item: 'Leite Integral 1L', Categoria: 'Laticínios', quantidade: 2, fator: 'un', valor: 6.5 },
-      { Lista: 'Café da manhã', descrição: 'Itens para a semana', ícone: '☕', Item: 'Pão Francês', Categoria: 'Padaria & Grãos', quantidade: 10, fator: 'un', valor: 1.2 },
-    ]);
-    worksheet['!cols'] = [{ wch: 24 }, { wch: 28 }, { wch: 10 }, { wch: 28 }, { wch: 26 }, { wch: 14 }, { wch: 12 }, { wch: 12 }];
+    const worksheet = XLSX.utils.aoa_to_sheet([['Lista', 'descrição', 'ícone', 'Item', 'Categoria', 'quantidade', 'fator', 'valor', 'Mercado', 'orçamento']]);
+    const currentRows = getTemplates().flatMap(template => template.items.map(item => ({
+      Lista: template.name,
+      descrição: template.description,
+      ícone: template.emoji,
+      Item: item.name,
+      Categoria: categories[item.category]?.label || 'Outros Itens',
+      quantidade: item.quantity,
+      fator: item.unit,
+      valor: item.price,
+      Mercado: template.marketName || '',
+      orçamento: template.targetBudget ?? '',
+    })));
+    XLSX.utils.sheet_add_json(worksheet, currentRows, { origin: 'A2', skipHeader: true });
+    worksheet['!cols'] = [{ wch: 24 }, { wch: 28 }, { wch: 10 }, { wch: 28 }, { wch: 26 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 24 }, { wch: 14 }];
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Modelos');
+    const catalogSheet = XLSX.utils.aoa_to_sheet([['Item', 'Categoria', 'fator', 'valor']]);
+    XLSX.utils.sheet_add_json(catalogSheet, getEditableItemConfigs().map(item => ({
+      Item: item.name,
+      Categoria: categories[item.category]?.label || 'Outros Itens',
+      fator: item.unit,
+      valor: item.defaultPrice ?? 0,
+    })), { origin: 'A2', skipHeader: true });
+    catalogSheet['!cols'] = [{ wch: 28 }, { wch: 26 }, { wch: 12 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(workbook, catalogSheet, 'Itens cadastrados');
     XLSX.writeFile(workbook, 'modelo-listas-prontas.xlsx');
   };
 
   const importTemplatesFromSpreadsheet = async (file?: File) => {
     if (!file) return;
     setIsImportingTemplates(true);
-    setNotice('Importando modelos...');
+    setNotice('Lendo planilha de modelos...');
     try {
       const XLSX = await import('xlsx');
       const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: '' });
-      const normalizeHeader = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+      const normalizeHeader = normalizeImportKey;
       const headers = new Set(rows.flatMap(row => Object.keys(row).map(normalizeHeader)));
       const requiredHeaders = ['lista', 'item', 'categoria', 'quantidade', 'fator', 'valor'];
       if (!requiredHeaders.every(header => headers.has(header))) {
@@ -246,60 +377,72 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
         return;
       }
 
-      const invalidRows: string[] = [];
-      const grouped = new Map<string, { name: string; description: string; emoji: string; items: ListTemplate['items'] }>();
+      const existingTemplateKeys = new Set(getTemplates().map(template => normalizeImportKey(template.name)));
+      const ignored: IgnoredImportRow[] = [];
+      const grouped = new Map<string, { name: string; description: string; emoji: string; marketName?: string; targetBudget?: number; items: ListTemplate['items'] }>();
       rows.forEach((row, index) => {
         const entries = Object.entries(row);
         const valueFor = (header: string) => entries.find(([key]) => normalizeHeader(key) === header)?.[1];
-        const listName = String(valueFor('lista') ?? '').trim();
+        const rawListName = String(valueFor('lista') ?? '').trim();
         const itemName = String(valueFor('item') ?? '').trim();
+        if (!rawListName && !itemName && !entries.some(([, value]) => String(value ?? '').trim())) return;
+        const rowLabel = `${rawListName || `Linha ${index + 2}`}${itemName ? ` · ${itemName}` : ''}`;
+        const templateKey = normalizeImportKey(rawListName);
+        if (existingTemplateKeys.has(templateKey)) {
+          ignored.push({ label: rowLabel, reason: 'Modelo de lista já cadastrado' });
+          return;
+        }
+        const listName = formatImportedName(rawListName);
         const categoryName = String(valueFor('categoria') ?? '').trim();
-        const category = Object.values(categories).find(candidate => normalizeHeader(candidate.id) === normalizeHeader(categoryName) || normalizeHeader(candidate.label) === normalizeHeader(categoryName));
+        const category = findImportedCategory(categories, categoryName);
         const registeredItem = registeredItems.find(item => normalizeHeader(item.name) === normalizeHeader(itemName));
         if (!listName || !itemName || !category || !registeredItem || registeredItem.category !== category?.id) {
-          invalidRows.push(`linha ${index + 2}`);
+          ignored.push({ label: rowLabel, reason: !listName || !itemName ? 'Lista ou item vazio' : !registeredItem ? 'Item não cadastrado' : 'Categoria inválida ou diferente da categoria do item' });
           return;
         }
         const quantity = Number(String(valueFor('quantidade') ?? '').replace(',', '.'));
-        const unit = String(valueFor('fator') ?? '').trim();
+        const rawUnit = String(valueFor('fator') ?? '').trim().toLocaleLowerCase('pt-BR');
+        const unit = rawUnit === 'l' ? 'L' : rawUnit;
         if (!Number.isFinite(quantity) || quantity <= 0 || !unit) {
-          invalidRows.push(`linha ${index + 2}`);
+          ignored.push({ label: rowLabel, reason: 'Quantidade ou unidade inválida' });
           return;
         }
-        const templateKey = listName.toLocaleLowerCase('pt-BR');
+        const budgetValue = valueFor('orcamento');
         const template = grouped.get(templateKey) || {
           name: listName,
-          description: String(valueFor('descricao') ?? valueFor('descrição') ?? '').trim(),
-          emoji: String(valueFor('icone') ?? valueFor('ícone') ?? '').trim() || '🛒',
+          description: formatImportedDescription(String(valueFor('descricao') ?? '')),
+          emoji: String(valueFor('icone') ?? '').trim() || '🛒',
+          marketName: formatImportedName(String(valueFor('mercado') ?? '')) || undefined,
+          targetBudget: String(budgetValue ?? '').trim() ? readImportedPrice(budgetValue) : undefined,
           items: [],
         };
+        if (template.items.some(item => normalizeImportKey(item.name) === normalizeImportKey(registeredItem.name))) {
+          ignored.push({ label: rowLabel, reason: 'Item repetido no mesmo modelo' });
+          return;
+        }
         template.items.push({ name: registeredItem.name, category: category.id, quantity, unit, price: readImportedPrice(valueFor('valor')), imageUrl: registeredItem.imageUrl, notes: registeredItem.notes });
         grouped.set(templateKey, template);
       });
 
-      if (invalidRows.length) {
-        setNotice(`Importação cancelada: item, categoria ou dados inválidos (${invalidRows.slice(0, 3).join(', ')}).`);
-        return;
-      }
-      if (!grouped.size) {
-        setNotice('Nenhum modelo foi importado.');
+      if (!grouped.size && !ignored.length) {
+        setNotice('A planilha não contém modelos para revisar.');
         return;
       }
       const now = currentTimestamp();
       const importedTemplates = Array.from(grouped.values()).map((template, index): ListTemplate => ({
-        id: `imported-${now.toString(36)}-${index}`,
+        id: `custom-imported-${now.toString(36)}-${index}`,
         name: template.name,
         description: template.description || `${template.items.length} itens`,
         emoji: template.emoji,
+        marketName: template.marketName,
+        targetBudget: template.targetBudget,
         items: template.items,
         createdAt: now,
         updatedAt: now,
       }));
-      let nextTemplates = templates;
-      importedTemplates.forEach(template => { nextTemplates = saveTemplate(template); });
-      setTemplates(nextTemplates);
-      scheduleSupabaseBackup(getStoredLists());
-      setNotice(`${importedTemplates.length} ${importedTemplates.length === 1 ? 'modelo importado' : 'modelos importados'} com sucesso.`);
+      setImportPreview({ kind: 'templates', fileName: file.name, templates: importedTemplates, ignored });
+      setImportError('');
+      setNotice('');
     } catch {
       setNotice('Não foi possível ler a planilha de modelos. Baixe o modelo para conferir as colunas.');
     } finally {
@@ -307,28 +450,114 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
     }
   };
 
+  const confirmImport = async () => {
+    if (!importPreview || isSavingImport) return;
+    setIsSavingImport(true);
+    setImportError('');
+    try {
+      if (importPreview.kind === 'items') {
+        const currentNames = new Set(getEditableItemConfigs().map(item => normalizeImportKey(item.name)));
+        const itemsToSave = importPreview.items.filter(item => !currentNames.has(normalizeImportKey(item.name)));
+        if (itemsToSave.length) {
+          if (SHARED_CATALOG_EDIT) await importSharedCatalogItems(itemsToSave);
+          else {
+            itemsToSave.forEach(saveItemConfig);
+            scheduleSupabaseBackup(getStoredLists());
+          }
+          setSavedItems(getEditableItemConfigs());
+        }
+        const ignoredCount = importPreview.ignored.length + importPreview.items.length - itemsToSave.length;
+        setNotice(`${itemsToSave.length} ${itemsToSave.length === 1 ? 'item cadastrado' : 'itens cadastrados'}. ${ignoredCount} ${ignoredCount === 1 ? 'item ignorado' : 'itens ignorados'}.`);
+      } else {
+        const currentNames = new Set(getTemplates().map(template => normalizeImportKey(template.name)));
+        let nextTemplates = getTemplates();
+        let savedCount = 0;
+        for (const template of importPreview.templates) {
+          const key = normalizeImportKey(template.name);
+          if (currentNames.has(key)) continue;
+          nextTemplates = saveTemplate(template);
+          currentNames.add(key);
+          savedCount += 1;
+        }
+        if (savedCount) {
+          setTemplates(nextTemplates);
+          scheduleSupabaseBackup(getStoredLists());
+        }
+        const ignoredCount = importPreview.ignored.length + importPreview.templates.length - savedCount;
+        setNotice(`${savedCount} ${savedCount === 1 ? 'modelo cadastrado' : 'modelos cadastrados'}. ${ignoredCount} ${ignoredCount === 1 ? 'linha ignorada' : 'linhas ignoradas'}.`);
+      }
+      setImportPreview(null);
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : 'Não foi possível concluir a importação.');
+    } finally {
+      setIsSavingImport(false);
+    }
+  };
+
   const saveListTemplate = (event: React.FormEvent) => {
     event.preventDefault();
     if (!templateName.trim() || templateItems.length === 0) return;
+    const name = templateName.trim();
+    if (templates.some(template => template.id !== editingTemplateId && normalizeImportKey(template.name) === normalizeImportKey(name))) {
+      setNotice('Já existe um modelo com esse nome.');
+      return;
+    }
+    const original = templates.find(template => template.id === editingTemplateId);
+    const normalizedBudget = templateBudget.includes(',') ? templateBudget.replace(/\./g, '').replace(',', '.') : templateBudget;
+    const budget = normalizedBudget.trim() ? Number(normalizedBudget) : undefined;
+    if (budget !== undefined && (!Number.isFinite(budget) || budget < 0)) {
+      setNotice('Informe um orçamento válido.');
+      return;
+    }
     const now = currentTimestamp();
     const template: ListTemplate = {
-      id: `custom-${now.toString(36)}`,
-      name: templateName.trim(),
+      id: original?.id || `custom-${crypto.randomUUID()}`,
+      name,
       description: templateDescription.trim() || `${templateItems.length} itens`,
       emoji: templateEmoji.trim() || '🛒',
+      marketName: templateMarketName.trim() || undefined,
+      targetBudget: budget,
       items: templateItems.map(name => {
+        const existing = original?.items.find(item => item.name === name);
+        if (existing) return existing;
         const item = registeredItems.find(candidate => candidate.name === name)!;
         return { name: item.name, category: item.category, quantity: 1, unit: item.unit, price: item.price, imageUrl: item.imageUrl, notes: item.notes };
       }),
-      createdAt: now,
+      createdAt: original?.createdAt || now,
       updatedAt: now,
     };
     setTemplates(saveTemplate(template));
+    resetTemplateEditor();
+    setNotice(original ? 'Modelo atualizado.' : 'Modelo salvo e disponível na tela inicial.');
+    scheduleSupabaseBackup(getStoredLists());
+  };
+
+  const resetTemplateEditor = () => {
+    setEditingTemplateId(null);
     setTemplateName('');
     setTemplateDescription('');
     setTemplateEmoji('🛒');
+    setTemplateMarketName('');
+    setTemplateBudget('');
     setTemplateItems([]);
-    setNotice('Modelo salvo e disponível na tela inicial.');
+  };
+
+  const editTemplate = (template: ListTemplate) => {
+    setEditingTemplateId(template.id);
+    setTemplateName(template.name);
+    setTemplateDescription(template.description);
+    setTemplateEmoji(template.emoji);
+    setTemplateMarketName(template.marketName || '');
+    setTemplateBudget(template.targetBudget === undefined ? '' : String(template.targetBudget).replace('.', ','));
+    setTemplateItems(template.items.map(item => item.name));
+    setNotice('');
+  };
+
+  const removeTemplate = (template: ListTemplate) => {
+    setTemplates(deleteTemplate(template.id));
+    if (editingTemplateId === template.id) resetTemplateEditor();
+    setTemplateToDelete(null);
+    setNotice(`Modelo "${template.name}" excluído.`);
     scheduleSupabaseBackup(getStoredLists());
   };
 
@@ -364,7 +593,7 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
   ];
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-5 pb-24">
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-5 pb-24 md:pb-3">
       {section === 'home' ? <>
         <div className="mb-6">
           <h1 className="text-xl font-extrabold text-slate-900">Configurações</h1>
@@ -406,26 +635,34 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
             })}
           </div>
         </div>
-      </div>{isCategoryEditorOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={() => { setIsCategoryEditorOpen(false); setEditingCategoryId(null); setCategoryName(''); }}><form onSubmit={saveCategory} onClick={event => event.stopPropagation()} className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 space-y-4"><label className="block text-xs font-bold text-slate-700">Nome<input required maxLength={40} value={categoryName} onChange={event => setCategoryName(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label><label className="flex items-center justify-between text-xs font-bold text-slate-700">Cor<input type="color" value={categoryColor} onChange={event => setCategoryColor(event.target.value)} className="h-10 w-12 cursor-pointer rounded-lg" /></label><div className="flex gap-2"><button type="button" onClick={() => { setIsCategoryEditorOpen(false); setEditingCategoryId(null); setCategoryName(''); }} className="flex-1 rounded-xl border border-slate-300 py-2.5 text-sm font-bold text-slate-700">Cancelar</button><button type="submit" className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-sm font-bold text-white">Salvar</button></div></form></div>}</> : section === 'items' ? <><div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><FileSpreadsheet size={20} /></span><div><h2 className="text-sm font-extrabold text-slate-900">Importar itens por Excel</h2><p className="text-xs text-slate-500">Colunas necessárias: Nome, valor, categoria e fator (unidade).</p></div></div><div className="flex gap-2"><button type="button" onClick={() => { void downloadItemImportExample(); }} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"><Download size={15} />Modelo</button><label className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700"><Upload size={15} />{isImportingItems ? 'Importando...' : 'Importar'}<input type="file" accept=".xlsx,.xls" className="hidden" disabled={isImportingItems} onChange={event => { void importItemsFromSpreadsheet(event.target.files?.[0]); event.currentTarget.value = ''; }} /></label></div></div></div><div className="grid md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-4 items-start">
+      </div>{isCategoryEditorOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={() => { setIsCategoryEditorOpen(false); setEditingCategoryId(null); setCategoryName(''); }}><form onSubmit={saveCategory} onClick={event => event.stopPropagation()} className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 space-y-4"><label className="block text-xs font-bold text-slate-700">Nome<input required maxLength={40} value={categoryName} onChange={event => setCategoryName(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label><label className="flex items-center justify-between text-xs font-bold text-slate-700">Cor<input type="color" value={categoryColor} onChange={event => setCategoryColor(event.target.value)} className="h-10 w-12 cursor-pointer rounded-lg" /></label><div className="flex gap-2"><button type="button" onClick={() => { setIsCategoryEditorOpen(false); setEditingCategoryId(null); setCategoryName(''); }} className="flex-1 rounded-xl border border-slate-300 py-2.5 text-sm font-bold text-slate-700">Cancelar</button><button type="submit" className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-sm font-bold text-white">Salvar</button></div></form></div>}</> : section === 'items' ? <><div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><FileSpreadsheet size={20} /></span><div><h2 className="text-sm font-extrabold text-slate-900">Importar itens por Excel</h2><p className="text-xs text-slate-500">Baixe os itens atuais; os já cadastrados serão ignorados na importação.</p></div></div><div className="flex gap-2"><button type="button" onClick={() => { void downloadItemImportExample(); }} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"><Download size={15} />Modelo</button><label className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700"><Upload size={15} />{isImportingItems ? 'Importando...' : 'Importar'}<input type="file" accept=".xlsx,.xls" className="hidden" disabled={isImportingItems} onChange={event => { void importItemsFromSpreadsheet(event.target.files?.[0]); event.currentTarget.value = ''; }} /></label></div></div></div><div className="grid md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-4 items-start">
         <form onSubmit={saveItem} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
           <h2 className="font-extrabold text-slate-900">{editingItemName ? 'Editar item' : 'Cadastrar item'}</h2>
           <label className="block text-xs font-bold text-slate-700">Nome<input required maxLength={100} value={itemName} onChange={event => setItemName(event.target.value)} placeholder="Ex: Ração para cachorro" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label>
           <div className="grid grid-cols-2 gap-2"><label className="block text-xs font-bold text-slate-700">Categoria<select value={itemCategory} onChange={event => setItemCategory(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-2 py-2.5 text-sm text-slate-900">{Object.values(categories).map(category => <option key={category.id} value={category.id}>{category.label}</option>)}</select></label><label className="block text-xs font-bold text-slate-700">Unidade<input value={itemUnit} onChange={event => setItemUnit(event.target.value)} maxLength={20} placeholder="un, kg, pct..." className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label></div>
           <label className="block text-xs font-bold text-slate-700">Preço padrão (R$)<input inputMode="decimal" value={itemPrice} onChange={event => setItemPrice(event.target.value.replace(/[^0-9,.]/g, ''))} placeholder="0,00" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label>
           <label className="block text-xs font-bold text-slate-700">Observação<input value={itemNotes} onChange={event => setItemNotes(event.target.value)} placeholder="Marca ou preferência" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label>
-          <div className="flex gap-2"><button type="submit" className="flex-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 text-sm font-bold flex items-center justify-center gap-2"><Check size={16} />Salvar item</button>{editingItemName && <button type="button" onClick={() => { setEditingItemName(null); setItemName(''); setItemCategory('feira'); setItemUnit('un'); setItemPrice(''); setItemNotes(''); }} className="rounded-xl border border-slate-300 px-3 text-sm font-semibold text-slate-600">Cancelar</button>}</div>
+          <div className="flex gap-2"><button type="submit" className="flex-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 text-sm font-bold flex items-center justify-center gap-2"><Check size={16} />{editingItemName ? 'Salvar alterações' : 'Cadastrar item'}</button>{editingItemName && <button type="button" onClick={() => { setEditingItemName(null); setItemName(''); setItemCategory('feira'); setItemUnit('un'); setItemPrice(''); setItemNotes(''); }} className="rounded-xl border border-slate-300 px-3 text-sm font-semibold text-slate-600">Cancelar</button>}</div>
         </form>
-        <div className="bg-white border border-slate-200 rounded-2xl p-4"><h2 className="font-extrabold text-slate-900 mb-1">Itens cadastrados</h2><p className="text-xs text-slate-500 mb-3">Os produtos prontos do catálogo também aparecem ao adicionar itens à lista.</p>{savedItems.length ? <div className="max-h-[60vh] overflow-y-auto divide-y divide-slate-100">{savedItems.map(item => <div key={item.name.toLocaleLowerCase('pt-BR')} className="flex items-center gap-2 py-2"><div className="flex-1 min-w-0"><p className="text-sm font-semibold text-slate-800 truncate">{item.name}</p><p className="text-xs text-slate-500">{categories[item.category]?.label || 'Outros Itens'} · {item.unit}</p></div><button type="button" onClick={() => editItem(item)} className="text-xs font-bold text-emerald-700">Editar</button></div>)}</div> : <p className="text-sm text-slate-500 py-4">Nenhum item personalizado cadastrado.</p>}</div>
-      </div></> : section === 'templates' ? <><div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><FileSpreadsheet size={20} /></span><div><h2 className="text-sm font-extrabold text-slate-900">Importar modelos por Excel</h2><p className="text-xs text-slate-500">Colunas: Lista, Item, Categoria, quantidade, fator e valor.</p></div></div><div className="flex gap-2"><button type="button" onClick={() => { void downloadTemplateImportExample(); }} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"><Download size={15} />Modelo</button><label className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700"><Upload size={15} />{isImportingTemplates ? 'Importando...' : 'Importar'}<input type="file" accept=".xlsx,.xls" className="hidden" disabled={isImportingTemplates} onChange={event => { void importTemplatesFromSpreadsheet(event.target.files?.[0]); event.currentTarget.value = ''; }} /></label></div></div></div><div className="grid md:grid-cols-2 gap-4 items-start">
+        <div className="bg-white border border-slate-200 rounded-2xl p-4">
+          <h2 className="font-extrabold text-slate-900 mb-3">Itens cadastrados</h2>
+          <label className="relative mb-3 block">
+            <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input type="search" aria-label="Buscar itens cadastrados" placeholder="Buscar item ou categoria" value={itemSearch} onChange={event => setItemSearch(event.target.value)} className="w-full rounded-xl border border-slate-300 py-2.5 pl-9 pr-3 text-sm text-slate-900 placeholder:text-slate-400" />
+          </label>
+          {filteredSavedItems.length ? <div className="max-h-[60vh] overflow-y-auto divide-y divide-slate-100">{filteredSavedItems.map(item => <div key={item.name.toLocaleLowerCase('pt-BR')} className="flex items-center gap-2 py-2"><div className="flex-1 min-w-0"><p className="text-sm font-semibold text-slate-800 truncate">{item.name}</p><p className="text-xs text-slate-500">{categories[item.category]?.label || 'Outros Itens'} · {item.unit}</p></div><div className="flex shrink-0 items-center gap-1"><button type="button" onClick={() => editItem(item)} className="rounded-lg px-2 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-50">Editar</button><button type="button" onClick={() => setItemToDelete(item)} aria-label={`Excluir ${item.name}`} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-50"><Trash2 size={14} />Excluir</button></div></div>)}</div> : <p className="text-sm text-slate-500 py-4">{savedItems.length ? 'Nenhum item encontrado.' : 'Nenhum item cadastrado.'}</p>}
+        </div>
+      </div>{itemToDelete && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={() => setItemToDelete(null)}><div role="dialog" aria-modal="true" aria-labelledby="delete-item-title" onClick={event => event.stopPropagation()} className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 shadow-xl"><h2 id="delete-item-title" className="font-extrabold text-slate-900">Excluir item cadastrado?</h2><p className="mt-2 text-sm text-slate-600">O item <strong>{itemToDelete.name}</strong> deixará de aparecer entre os produtos cadastrados. Itens já adicionados às listas não serão removidos.</p><div className="mt-5 flex gap-2"><button type="button" onClick={() => setItemToDelete(null)} className="flex-1 rounded-xl border border-slate-300 px-3 py-2.5 text-sm font-bold text-slate-700">Cancelar</button><button type="button" onClick={() => deleteSavedItem(itemToDelete)} className="flex-1 rounded-xl bg-rose-600 px-3 py-2.5 text-sm font-bold text-white hover:bg-rose-700">Excluir</button></div></div></div>}</> : section === 'templates' ? <><div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><FileSpreadsheet size={20} /></span><div><h2 className="text-sm font-extrabold text-slate-900">Importar modelos por Excel</h2><p className="text-xs text-slate-500">Baixe os modelos atuais; listas já cadastradas serão ignoradas na importação.</p></div></div><div className="flex gap-2"><button type="button" onClick={() => { void downloadTemplateImportExample(); }} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"><Download size={15} />Modelo</button><label className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700"><Upload size={15} />{isImportingTemplates ? 'Importando...' : 'Importar'}<input type="file" accept=".xlsx,.xls" className="hidden" disabled={isImportingTemplates} onChange={event => { void importTemplatesFromSpreadsheet(event.target.files?.[0]); event.currentTarget.value = ''; }} /></label></div></div></div><div className="grid md:grid-cols-2 gap-4 items-start">
         <form onSubmit={saveListTemplate} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
-          <h2 className="font-extrabold text-slate-900">Novo modelo de lista</h2>
-          <div className="grid grid-cols-[64px_1fr] gap-2"><label className="block text-xs font-bold text-slate-700">Ícone<input value={templateEmoji} onChange={event => setTemplateEmoji(event.target.value)} maxLength={4} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-center" /></label><label className="block text-xs font-bold text-slate-700">Nome<input required value={templateName} onChange={event => setTemplateName(event.target.value)} placeholder="Ex: Compras para festa" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label></div>
+          <h2 className="font-extrabold text-slate-900">{editingTemplateId ? 'Editar modelo de lista' : 'Novo modelo de lista'}</h2>
+          <div className="grid grid-cols-[64px_1fr] gap-2"><label className="block text-xs font-bold text-slate-700">Ícone<input value={templateEmoji} onChange={event => setTemplateEmoji(event.target.value)} maxLength={4} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-center" /></label><label className="block text-xs font-bold text-slate-700">Nome<input required maxLength={100} value={templateName} onChange={event => setTemplateName(event.target.value)} placeholder="Ex: Compras para festa" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label></div>
           <label className="block text-xs font-bold text-slate-700">Descrição<input value={templateDescription} onChange={event => setTemplateDescription(event.target.value)} placeholder="Ex: Bebidas e petiscos" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label>
-          <fieldset><legend className="text-xs font-bold text-slate-700 mb-2">Itens do modelo</legend><div className="max-h-64 overflow-y-auto rounded-xl border border-slate-200 divide-y divide-slate-100">{registeredItems.map(item => <label key={item.id} className="flex items-center gap-2 px-3 py-2 text-sm text-slate-700"><input type="checkbox" checked={templateItems.includes(item.name)} onChange={event => setTemplateItems(current => event.target.checked ? [...current, item.name] : current.filter(name => name !== item.name))} /><span className="flex-1 truncate">{item.name}</span></label>)}</div></fieldset>
-          <button type="submit" disabled={!templateName.trim() || !templateItems.length} className="w-full rounded-xl bg-emerald-600 disabled:bg-slate-300 text-white py-2.5 text-sm font-bold">Salvar modelo</button>
+          <div className="grid grid-cols-2 gap-2"><label className="block text-xs font-bold text-slate-700">Mercado<input value={templateMarketName} onChange={event => setTemplateMarketName(event.target.value)} placeholder="Opcional" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label><label className="block text-xs font-bold text-slate-700">Orçamento (R$)<input inputMode="decimal" value={templateBudget} onChange={event => setTemplateBudget(event.target.value.replace(/[^0-9,.]/g, ''))} placeholder="Opcional" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label></div>
+          <fieldset><legend className="text-xs font-bold text-slate-700 mb-2">Itens do modelo</legend><div className="max-h-64 overflow-y-auto rounded-xl border border-slate-200 divide-y divide-slate-100">{[...registeredItems.map(item => item.name), ...(templates.find(template => template.id === editingTemplateId)?.items.map(item => item.name) || [])].filter((name, index, all) => all.indexOf(name) === index).map(name => <label key={name} className="flex items-center gap-2 px-3 py-2 text-sm text-slate-700"><input type="checkbox" checked={templateItems.includes(name)} onChange={event => setTemplateItems(current => event.target.checked ? [...current, name] : current.filter(selected => selected !== name))} /><span className="flex-1 truncate">{name}</span></label>)}</div></fieldset>
+          <div className="flex gap-2"><button type="submit" disabled={!templateName.trim() || !templateItems.length} className="flex-1 rounded-xl bg-emerald-600 disabled:bg-slate-300 text-white py-2.5 text-sm font-bold">{editingTemplateId ? 'Salvar alterações' : 'Cadastrar modelo'}</button>{editingTemplateId && <button type="button" onClick={resetTemplateEditor} className="rounded-xl border border-slate-300 px-3 text-sm font-semibold text-slate-600">Cancelar</button>}</div>
         </form>
-        <div className="bg-white border border-slate-200 rounded-2xl p-4"><h2 className="font-extrabold text-slate-900 mb-3">Modelos disponíveis</h2><div className="space-y-2">{templates.map(template => <div key={template.id} className="flex items-center gap-3 rounded-xl border border-slate-100 p-3"><span className="text-xl">{template.emoji}</span><div className="min-w-0"><p className="text-sm font-bold text-slate-800 truncate">{template.name}</p><p className="text-xs text-slate-500">{template.items.length} itens · {template.description}</p></div></div>)}</div></div>
-      </div></> : <div className="bg-white border border-slate-200 rounded-2xl p-4 max-w-xl space-y-5">
+        <div className="bg-white border border-slate-200 rounded-2xl p-4"><h2 className="font-extrabold text-slate-900 mb-3">Modelos disponíveis</h2><div className="max-h-[60vh] space-y-2 overflow-y-auto">{templates.length ? templates.map(template => <div key={template.id} className="flex items-center gap-2 rounded-xl border border-slate-100 p-3"><span className="text-xl">{template.emoji}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-slate-800">{template.name}</p><p className="text-xs text-slate-500">{template.items.length} itens · {template.description}</p></div><div className="flex shrink-0 items-center gap-1"><button type="button" onClick={() => editTemplate(template)} className="rounded-lg px-2 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-50">Editar</button><button type="button" onClick={() => setTemplateToDelete(template)} aria-label={`Excluir ${template.name}`} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-50"><Trash2 size={14} />Excluir</button></div></div>) : <p className="py-4 text-sm text-slate-500">Nenhum modelo cadastrado.</p>}</div></div>
+      </div>{templateToDelete && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={() => setTemplateToDelete(null)}><div role="dialog" aria-modal="true" aria-labelledby="delete-template-title" onClick={event => event.stopPropagation()} className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 shadow-xl"><h2 id="delete-template-title" className="font-extrabold text-slate-900">Excluir modelo de lista?</h2><p className="mt-2 text-sm text-slate-600">O modelo <strong>{templateToDelete.name}</strong> deixará de aparecer na tela inicial. Listas já criadas com ele serão mantidas.</p><div className="mt-5 flex gap-2"><button type="button" onClick={() => setTemplateToDelete(null)} className="flex-1 rounded-xl border border-slate-300 px-3 py-2.5 text-sm font-bold text-slate-700">Cancelar</button><button type="button" onClick={() => removeTemplate(templateToDelete)} className="flex-1 rounded-xl bg-rose-600 px-3 py-2.5 text-sm font-bold text-white hover:bg-rose-700">Excluir</button></div></div></div>}</> : <div className="bg-white border border-slate-200 rounded-2xl p-4 max-w-xl space-y-5">
         <div><h2 className="font-extrabold text-slate-900">Tema do aplicativo</h2><p className="text-xs text-slate-500 mt-1">Escolha como o aplicativo aparece neste dispositivo.</p></div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">{([['light', 'Claro', Sun], ['dark', 'Escuro', Moon], ['black', 'Preto', Circle], ['system', 'Sistema', Palette]] as const).map(([mode, label, Icon]) => <button key={mode} type="button" onClick={() => updateTheme(mode)} className={`rounded-xl border p-3 flex flex-col items-center gap-1 text-xs font-bold ${theme.mode === mode ? 'border-emerald-500 bg-emerald-50 text-emerald-900' : 'border-slate-200 text-slate-600'}`}><Icon size={18} fill={mode === 'black' ? 'currentColor' : 'none'} />{label}</button>)}</div>
         <div className="grid grid-cols-2 gap-3">
@@ -434,6 +671,28 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
         </div>
         <div className="flex items-center justify-between gap-4 rounded-xl border border-slate-200 px-3.5 py-3"><div className="flex items-center gap-3"><span className={`flex h-9 w-9 items-center justify-center rounded-lg ${theme.showImages ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{theme.showImages ? <Eye size={18} /> : <EyeOff size={18} />}</span><div><p className="text-sm font-bold text-slate-800">Exibir imagens dos itens</p><p className="text-xs text-slate-500">{theme.showImages ? 'Fotos visíveis nas listas.' : 'Fotos ocultas nas listas.'}</p></div></div><button type="button" role="switch" aria-checked={theme.showImages} onClick={() => updateTheme(theme.mode, theme.primaryColor, !theme.showImages)} className={`relative h-6 w-11 shrink-0 overflow-hidden rounded-full p-1 transition-colors ${theme.showImages ? 'bg-emerald-600' : 'bg-slate-300'}`}><span className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${theme.showImages ? 'translate-x-5' : 'translate-x-0'}`} /></button></div>
       </div>}</>}
+      {importPreview && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 p-4" onClick={() => { if (!isSavingImport) { setImportPreview(null); setImportError(''); } }}>
+        <div role="dialog" aria-modal="true" aria-labelledby="import-preview-title" onClick={event => event.stopPropagation()} className="flex max-h-[90dvh] w-full max-w-2xl flex-col rounded-2xl bg-white p-5 shadow-xl">
+          <h2 id="import-preview-title" className="text-lg font-extrabold text-slate-900">Revisar importação</h2>
+          <p className="mt-1 truncate text-xs text-slate-500">{importPreview.fileName}</p>
+          <div className="mt-4 min-h-0 flex-1 space-y-5 overflow-y-auto pr-1">
+            <section>
+              <h3 className="mb-2 text-sm font-bold text-emerald-700">Serão cadastrados ({importPreview.kind === 'items' ? importPreview.items.length : importPreview.templates.length})</h3>
+              {importPreview.kind === 'items' ? (importPreview.items.length ? <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 px-3">{importPreview.items.map((item, index) => <div key={`${item.name}-${index}`} className="flex items-start justify-between gap-3 py-2"><div><p className="text-sm font-semibold text-slate-800">{item.name}</p><p className="text-xs text-slate-500">{categories[item.category]?.label || 'Outros Itens'} · {item.unit}</p></div><span className="shrink-0 text-xs font-semibold text-slate-700">{formatCurrency(item.defaultPrice ?? 0)}</span></div>)}</div> : <p className="text-xs text-slate-500">Nenhum item novo.</p>)
+                : (importPreview.templates.length ? <div className="space-y-2">{importPreview.templates.map(template => <div key={template.id} className="rounded-xl border border-slate-200 p-3"><p className="text-sm font-bold text-slate-800">{template.emoji} {template.name}</p><p className="mt-1 text-xs text-slate-500">{template.description}</p><ul className="mt-2 space-y-1">{template.items.map((item, index) => <li key={`${item.name}-${index}`} className="text-xs text-slate-700">{item.name} · {item.quantity} {item.unit} · {formatCurrency(item.price)}</li>)}</ul></div>)}</div> : <p className="text-xs text-slate-500">Nenhum modelo novo.</p>)}
+            </section>
+            <section>
+              <h3 className="mb-2 text-sm font-bold text-slate-700">Serão ignorados ({importPreview.ignored.length})</h3>
+              {importPreview.ignored.length ? <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 px-3">{importPreview.ignored.map((row, index) => <div key={`${row.label}-${index}`} className="py-2"><p className="text-sm font-semibold text-slate-700">{row.label}</p><p className="text-xs text-slate-500">{row.reason}</p></div>)}</div> : <p className="text-xs text-slate-500">Nenhum registro ignorado.</p>}
+            </section>
+          </div>
+          {importError && <p role="alert" className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{importError}</p>}
+          <div className="mt-4 flex gap-2 border-t border-slate-100 pt-4">
+            <button type="button" disabled={isSavingImport} onClick={() => { setImportPreview(null); setImportError(''); }} className="flex-1 rounded-xl border border-slate-300 px-3 py-2.5 text-sm font-bold text-slate-700 disabled:opacity-50">Cancelar</button>
+            <button type="button" disabled={isSavingImport} onClick={() => { void confirmImport(); }} className="flex-1 rounded-xl bg-emerald-600 px-3 py-2.5 text-sm font-bold text-white disabled:opacity-50">{isSavingImport ? 'Salvando...' : (importPreview.kind === 'items' ? importPreview.items.length : importPreview.templates.length) ? 'Confirmar cadastro' : 'Concluir'}</button>
+          </div>
+        </div>
+      </div>}
     </div>
   );
 }

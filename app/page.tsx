@@ -34,7 +34,9 @@ import {
   getCurrentSession,
   isOfflineSyncPending,
   isSupabaseConfigured,
+  loadItemConfigsFromSupabase,
   loadListsFromSupabase,
+  loadTemplatesFromSupabase,
   onAuthSessionChange,
   scheduleSupabaseBackup,
   signOut,
@@ -65,6 +67,7 @@ function ShoppingApp() {
   const [authReady, setAuthReady] = useState(!isSupabaseConfigured());
   const [session, setSession] = useState<Session | null>(null);
   const [syncNotice, setSyncNotice] = useState('');
+  const [syncFailure, setSyncFailure] = useState('');
 
   // Modals state
   const [isItemModalOpen, setIsItemModalOpen] = useState(false);
@@ -92,11 +95,25 @@ function ShoppingApp() {
   }, [activeTab, activeListId, listTypeFilter]);
 
   useEffect(() => {
+    const showFailure = (event: Event) => setSyncFailure((event as CustomEvent<string>).detail);
+    const clearFailure = () => setSyncFailure('');
+    window.addEventListener('supabase-sync-error', showFailure);
+    window.addEventListener('supabase-sync-success', clearFailure);
+    return () => {
+      window.removeEventListener('supabase-sync-error', showFailure);
+      window.removeEventListener('supabase-sync-success', clearFailure);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!session) return;
     let active = true;
     let unsubscribeRealtime = () => {};
     const applyRemote = async () => {
-      if (isOfflineSyncPending() || !navigator.onLine) return;
+      if (!navigator.onLine) return;
+      await loadItemConfigsFromSupabase();
+      if (isOfflineSyncPending()) return;
+      await loadTemplatesFromSupabase();
       const remote = await loadListsFromSupabase();
       if (!active || !remote.length) return;
       setLists(remote);
@@ -113,6 +130,8 @@ function ShoppingApp() {
           return;
         }
         await flushPendingSupabaseBackup();
+        await loadItemConfigsFromSupabase();
+        await loadTemplatesFromSupabase();
         const remote = await loadListsFromSupabase();
         if (!active) return;
         if (remote.length) {
@@ -157,6 +176,8 @@ function ShoppingApp() {
       setSyncNotice('Conexão recuperada. Sincronizando alterações...');
       try {
         await flushPendingSupabaseBackup();
+        await loadItemConfigsFromSupabase();
+        await loadTemplatesFromSupabase();
         await applyRemote();
         if (active) {
           setSyncNotice('');
@@ -463,7 +484,7 @@ function ShoppingApp() {
       title = 'Churrasco com a Galera';
       marketName = 'Empório de Carnes';
       targetBudget = 250.0;
-      const churrascoNames = ['Picanha Bovina', 'Carne Moída Patinho', 'Cerveja Puro Malte Lata', 'Pão Francês', 'Suco de Laranja Integral 900ml'];
+      const churrascoNames = ['Picanha', 'Carne Moída', 'Cerveja', 'Pão', 'Suco de Laranja'];
       templateItems = churrascoNames.map((name, idx) => {
         const p = CATALOG_PRESETS.find(item => item.name === name) || CATALOG_PRESETS[0];
         return {
@@ -482,7 +503,7 @@ function ShoppingApp() {
       title = 'Despensa do Mês';
       marketName = 'Supermercado Atacadista';
       targetBudget = 200.0;
-      const basicaNames = ['Arroz Branco 5kg', 'Feijão Carioca 1kg', 'Azeite Extra Virgem 500ml', 'Café Torrado e Moído 500g', 'Macarrão Espaguete 500g', 'Sabão em Pó 1.6kg', 'Detergente Neutro 500ml'];
+      const basicaNames = ['Arroz', 'Feijão', 'Azeite', 'Café', 'Macarrão', 'Sabão em Pó', 'Detergente'];
       templateItems = basicaNames.map((name, idx) => {
         const p = CATALOG_PRESETS.find(item => item.name === name) || CATALOG_PRESETS[0];
         return {
@@ -501,7 +522,7 @@ function ShoppingApp() {
       title = 'Café da Manhã Completo';
       marketName = 'Padaria & Confeitaria';
       targetBudget = 60.0;
-      const cafeNames = ['Pão Francês', 'Pão de Forma Integral', 'Manteiga com Sal 200g', 'Queijo Mussarela Fatiado', 'Leite Integral 1L', 'Café Torrado e Moído 500g'];
+      const cafeNames = ['Pão', 'Pão de Forma', 'Manteiga', 'Queijo', 'Leite', 'Café'];
       templateItems = cafeNames.map((name, idx) => {
         const p = CATALOG_PRESETS.find(item => item.name === name) || CATALOG_PRESETS[0];
         return {
@@ -676,7 +697,8 @@ function ShoppingApp() {
         onDuplicateList={() => handleDuplicateList(activeList.id)}
         onRequestDeleteList={() => setListToDelete(activeList)}
       />
-      {syncNotice && <div role="status" className="fixed top-16 left-1/2 -translate-x-1/2 z-40 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-bold text-emerald-900 shadow-lg">{syncNotice}</div>}
+      {syncFailure ? <div role="alert" className="fixed top-16 left-1/2 z-40 w-[min(90vw,36rem)] -translate-x-1/2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-bold text-rose-900 shadow-lg">Falha na sincronização: {syncFailure}</div>
+        : syncNotice && <div role="status" className="fixed top-16 left-1/2 -translate-x-1/2 z-40 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-bold text-emerald-900 shadow-lg">{syncNotice}</div>}
 
       {/* Main Content Area */}
       <main className="flex-1">

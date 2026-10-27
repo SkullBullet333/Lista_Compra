@@ -21,10 +21,9 @@ import {
   Camera,
   Upload,
 } from 'lucide-react';
-import { GroceryItem, CategoryId, UnitType } from '@/types/grocery';
+import { GroceryItem, CategoryId, SavedItemConfig, UnitType } from '@/types/grocery';
 import { getAllCategories } from '@/lib/categories';
-import { CATALOG_PRESETS } from '@/lib/catalog';
-import { formatCurrency, saveItemConfig, findConfiguredItem } from '@/lib/storage';
+import { formatCurrency, saveItemConfig, findConfiguredItem, getEditableItemConfigs } from '@/lib/storage';
 
 interface ItemModalProps {
   isOpen: boolean;
@@ -169,12 +168,12 @@ function ItemModalForm({
     }
   };
 
-  const handleSelectPreset = (preset: typeof CATALOG_PRESETS[0]) => {
+  const handleSelectPreset = (preset: SavedItemConfig) => {
     setName(preset.name);
     setCategory(preset.category);
-    setPrice(preset.defaultPrice.toFixed(2).replace('.', ','));
-    setUnit(preset.defaultUnit);
-    setImageUrl(preset.imageUrl);
+    setPrice((preset.defaultPrice || 0).toFixed(2).replace('.', ','));
+    setUnit(preset.unit);
+    setImageUrl(preset.imageUrl || '');
     setAutoMatchedSource('Catálogo');
   };
 
@@ -260,7 +259,7 @@ function ItemModalForm({
                 autoFocus={!initialItem}
                 value={name}
                 onChange={e => handleNameChange(e.target.value)}
-                placeholder="Ex: Arroz Tio João, Banana Prata, Sabão..."
+                placeholder="Ex: Arroz Tio João, Banana, Sabão..."
                 className="w-full px-3.5 py-2.5 sm:py-3 rounded-xl border border-slate-300 text-slate-900 text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all font-semibold placeholder:font-normal placeholder:text-slate-400"
               />
               {name && (
@@ -285,7 +284,7 @@ function ItemModalForm({
                   Sugestões rápidas:
                 </span>
                 <div className="flex flex-wrap gap-1.5">
-                  {CATALOG_PRESETS.filter(p =>
+                  {getEditableItemConfigs().filter(p =>
                     !name.trim() || p.name.toLowerCase().includes(name.toLowerCase())
                   )
                     .slice(0, 5)
@@ -299,7 +298,7 @@ function ItemModalForm({
                         <Sparkles size={11} className="text-emerald-700" />
                         <span>{preset.name}</span>
                         <span className="text-[10px] text-emerald-700 opacity-80">
-                          ({formatCurrency(preset.defaultPrice)})
+                          ({formatCurrency(preset.defaultPrice || 0)})
                         </span>
                       </button>
                     ))}

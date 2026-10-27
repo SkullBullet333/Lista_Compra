@@ -172,6 +172,9 @@ export interface ListCollaborator {
 
 export interface SavedItemConfig {
   name: string;
+  deleted?: boolean;
+  catalogId?: string;
+  previousName?: string;
   unit: UnitType;
   category: CategoryId;
   imageUrl?: string;

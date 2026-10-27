@@ -1,11 +1,13 @@
 import { ShoppingList, GroceryItem, ListTotals, SavedItemConfig, UnitType, CategoryId, ListType } from '@/types/grocery';
 import { CATALOG_PRESETS, guessCategory } from '@/lib/catalog';
+import { SHARED_CATALOG_EDIT } from '@/lib/catalog-mode';
 
 const STORAGE_KEY = 'fresh_market_shopping_lists_v1';
 const ACTIVE_LIST_KEY = 'fresh_market_active_list_id_v1';
 const LAST_NAVIGATION_KEY = 'fresh_market_last_navigation_v1';
 const LAST_NAVIGATION_MAX_AGE = 5 * 60 * 1000;
 const SAVED_CONFIGS_KEY = 'fresh_market_item_configs_v1';
+const SHARED_CATALOG_KEY = 'fresh_market_shared_catalog_v1';
 const PRICE_HISTORY_KEY = 'fresh_market_price_history_v1';
 
 export interface PriceHistoryEntry {
@@ -69,7 +71,7 @@ export const INITIAL_LISTS: ShoppingList[] = [
     items: [
       {
         id: 'item-1',
-        name: 'Maçã Gala',
+        name: 'Maçã',
         category: 'feira',
         quantity: 1.5,
         unit: 'kg',
@@ -81,7 +83,7 @@ export const INITIAL_LISTS: ShoppingList[] = [
       },
       {
         id: 'item-2',
-        name: 'Banana Prata',
+        name: 'Banana',
         category: 'feira',
         quantity: 1.2,
         unit: 'kg',
@@ -93,7 +95,7 @@ export const INITIAL_LISTS: ShoppingList[] = [
       },
       {
         id: 'item-3',
-        name: 'Tomate Italiano',
+        name: 'Tomate',
         category: 'feira',
         quantity: 1.0,
         unit: 'kg',
@@ -105,7 +107,7 @@ export const INITIAL_LISTS: ShoppingList[] = [
       },
       {
         id: 'item-4',
-        name: 'Alface Crespa Hidropônica',
+        name: 'Alface Hidropônica',
         category: 'feira',
         quantity: 2,
         unit: 'un',
@@ -116,7 +118,7 @@ export const INITIAL_LISTS: ShoppingList[] = [
       },
       {
         id: 'item-5',
-        name: 'Pão Francês Crocante',
+        name: 'Pão Crocante',
         category: 'padaria',
         quantity: 0.5,
         unit: 'kg',
@@ -127,7 +129,7 @@ export const INITIAL_LISTS: ShoppingList[] = [
       },
       {
         id: 'item-6',
-        name: 'Leite Integral 1L',
+        name: 'Leite',
         category: 'laticinios',
         quantity: 3,
         unit: 'un',
@@ -139,7 +141,7 @@ export const INITIAL_LISTS: ShoppingList[] = [
       },
       {
         id: 'item-7',
-        name: 'Queijo Mussarela Fatiado',
+        name: 'Queijo',
         category: 'laticinios',
         quantity: 1,
         unit: 'pct',
@@ -150,7 +152,7 @@ export const INITIAL_LISTS: ShoppingList[] = [
       },
       {
         id: 'item-8',
-        name: 'Azeite Extra Virgem 500ml',
+        name: 'Azeite',
         category: 'mercearia',
         quantity: 1,
         unit: 'un',
@@ -173,7 +175,7 @@ export const INITIAL_LISTS: ShoppingList[] = [
     items: [
       {
         id: 'c-1',
-        name: 'Picanha Bovina Resfriada',
+        name: 'Picanha Resfriada',
         category: 'carnes',
         quantity: 1.8,
         unit: 'kg',
@@ -228,7 +230,7 @@ export const INITIAL_LISTS: ShoppingList[] = [
     items: [
       {
         id: 'm-1',
-        name: 'Arroz Branco 5kg',
+        name: 'Arroz',
         category: 'mercearia',
         quantity: 2,
         unit: 'pct',
@@ -239,7 +241,7 @@ export const INITIAL_LISTS: ShoppingList[] = [
       },
       {
         id: 'm-2',
-        name: 'Feijão Carioca 1kg',
+        name: 'Feijão',
         category: 'mercearia',
         quantity: 3,
         unit: 'pct',
@@ -250,7 +252,7 @@ export const INITIAL_LISTS: ShoppingList[] = [
       },
       {
         id: 'm-3',
-        name: 'Café Torrado e Moído 500g',
+        name: 'Café',
         category: 'mercearia',
         quantity: 2,
         unit: 'pct',
@@ -261,7 +263,7 @@ export const INITIAL_LISTS: ShoppingList[] = [
       },
       {
         id: 'm-4',
-        name: 'Sabão em Pó 1.6kg',
+        name: 'Sabão em Pó',
         category: 'limpeza',
         quantity: 2,
         unit: 'cx',
@@ -272,7 +274,7 @@ export const INITIAL_LISTS: ShoppingList[] = [
       },
       {
         id: 'm-5',
-        name: 'Papel Higiênico 12 Rolos',
+        name: 'Papel Higiênico',
         category: 'limpeza',
         quantity: 2,
         unit: 'pct',
@@ -419,13 +421,62 @@ export function getSavedItemConfigs(): Record<string, SavedItemConfig> {
   }
 }
 
+export function replaceSavedItemConfigs(configs: Record<string, SavedItemConfig>): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(SAVED_CONFIGS_KEY, JSON.stringify(configs));
+}
+
+export function getSharedCatalogItems(): SavedItemConfig[] | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const value = localStorage.getItem(SHARED_CATALOG_KEY);
+    return value === null ? null : JSON.parse(value) as SavedItemConfig[];
+  } catch {
+    return null;
+  }
+}
+
+export function replaceSharedCatalogItems(items: SavedItemConfig[]): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(SHARED_CATALOG_KEY, JSON.stringify(items));
+  window.dispatchEvent(new Event('catalog-items-updated'));
+}
+
+export function getEditableItemConfigs(): SavedItemConfig[] {
+  if (SHARED_CATALOG_EDIT) {
+    const shared = getSharedCatalogItems();
+    if (shared) return shared.filter(item => !item.deleted).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+    return CATALOG_PRESETS.map(preset => ({
+      name: preset.name, category: preset.category, unit: preset.defaultUnit,
+      defaultPrice: preset.defaultPrice, imageUrl: preset.imageUrl, updatedAt: 0,
+    })).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+  }
+  const configs = getSavedItemConfigs();
+  const items = new Map<string, SavedItemConfig>();
+  for (const preset of CATALOG_PRESETS) {
+    const key = preset.name.trim().toLocaleLowerCase('pt-BR');
+    items.set(key, {
+      name: preset.name, category: preset.category, unit: preset.defaultUnit,
+      defaultPrice: preset.defaultPrice, imageUrl: preset.imageUrl, updatedAt: 0,
+    });
+  }
+  for (const [key, config] of Object.entries(configs)) {
+    if (config.deleted) items.delete(key);
+    else items.set(key, config);
+  }
+  return Array.from(items.values()).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+}
+
 export function saveItemConfig(config: SavedItemConfig): void {
+  if (SHARED_CATALOG_EDIT) return;
   if (typeof window === 'undefined') return;
   try {
     const current = getSavedItemConfigs();
-    const key = config.name.trim().toLowerCase();
+    const key = config.name.trim().toLocaleLowerCase('pt-BR');
     current[key] = {
+      ...current[key],
       ...config,
+      deleted: false,
       updatedAt: Date.now(),
     };
     localStorage.setItem(SAVED_CONFIGS_KEY, JSON.stringify(current));
@@ -434,10 +485,51 @@ export function saveItemConfig(config: SavedItemConfig): void {
   }
 }
 
-export function deleteItemConfig(name: string): void {
+export function saveEditedItemConfig(originalName: string, config: SavedItemConfig): void {
+  if (SHARED_CATALOG_EDIT) return;
   if (typeof window === 'undefined') return;
   const configs = getSavedItemConfigs();
-  delete configs[name.trim().toLowerCase()];
+  const originalKey = originalName.trim().toLocaleLowerCase('pt-BR');
+  const nextKey = config.name.trim().toLocaleLowerCase('pt-BR');
+  const original = configs[originalKey];
+  const isPreset = CATALOG_PRESETS.some(item => item.name.trim().toLocaleLowerCase('pt-BR') === originalKey);
+  if (originalKey !== nextKey) {
+    if (isPreset) {
+      configs[originalKey] = {
+        name: originalName, category: original?.category || 'outros', unit: original?.unit || 'un',
+        deleted: true, updatedAt: Date.now(),
+      };
+    } else {
+      delete configs[originalKey];
+    }
+  }
+  configs[nextKey] = {
+    ...config,
+    catalogId: original?.catalogId || config.catalogId,
+    previousName: originalKey !== nextKey ? (original?.previousName || originalName) : original?.previousName,
+    deleted: false,
+    updatedAt: Date.now(),
+  };
+  replaceSavedItemConfigs(configs);
+}
+
+export function markItemConfigSynced(name: string, catalogId: string): void {
+  const configs = getSavedItemConfigs();
+  const key = name.trim().toLocaleLowerCase('pt-BR');
+  if (!configs[key] || configs[key].deleted) return;
+  configs[key] = { ...configs[key], catalogId, previousName: undefined };
+  replaceSavedItemConfigs(configs);
+}
+
+export function deleteItemConfig(name: string): void {
+  if (SHARED_CATALOG_EDIT) return;
+  if (typeof window === 'undefined') return;
+  const configs = getSavedItemConfigs();
+  const key = name.trim().toLocaleLowerCase('pt-BR');
+  const existing = configs[key];
+  configs[key] = existing
+    ? { ...existing, deleted: true, updatedAt: Date.now() }
+    : { name: name.trim(), category: 'outros', unit: 'un', deleted: true, updatedAt: Date.now() };
   localStorage.setItem(SAVED_CONFIGS_KEY, JSON.stringify(configs));
 }
 
@@ -455,10 +547,25 @@ export function findConfiguredItem(
   name: string,
   currentLists?: ShoppingList[]
 ): InferredConfig {
-  const normalized = name.trim().toLowerCase();
+  const normalized = name.trim().toLocaleLowerCase('pt-BR');
+
+  if (SHARED_CATALOG_EDIT) {
+    const catalog = getEditableItemConfigs();
+    const found = catalog.find(item => item.name.trim().toLocaleLowerCase('pt-BR') === normalized)
+      || catalog.filter(item => {
+        const itemName = item.name.trim().toLocaleLowerCase('pt-BR');
+        return itemName.includes(normalized) || normalized.includes(itemName);
+      }).sort((a, b) => b.name.length - a.name.length)[0];
+    return found
+      ? { name: found.name, unit: found.unit, category: found.category, imageUrl: found.imageUrl, notes: found.notes, source: 'catalog' }
+      : { name, unit: 'un', category: guessCategory(name), source: 'default' };
+  }
 
   // 1. Check user's saved items memory (from "Item Detalhado")
   const savedConfigs = getSavedItemConfigs();
+  if (savedConfigs[normalized]?.deleted) {
+    return { name, unit: 'un', category: guessCategory(name), source: 'default' };
+  }
   if (savedConfigs[normalized]) {
     const cfg = savedConfigs[normalized];
     return {
@@ -473,6 +580,7 @@ export function findConfiguredItem(
 
   // Partial match in user saved
   for (const key of Object.keys(savedConfigs)) {
+    if (savedConfigs[key].deleted) continue;
     if (key.includes(normalized) || normalized.includes(key)) {
       const cfg = savedConfigs[key];
       return {
@@ -506,7 +614,8 @@ export function findConfiguredItem(
 
   // 3. Check catalog presets
   const preset = CATALOG_PRESETS.find(
-    p => p.name.toLowerCase() === normalized || p.name.toLowerCase().includes(normalized) || normalized.includes(p.name.toLowerCase())
+    p => !savedConfigs[p.name.trim().toLocaleLowerCase('pt-BR')]?.deleted &&
+      (p.name.toLowerCase() === normalized || p.name.toLowerCase().includes(normalized) || normalized.includes(p.name.toLowerCase()))
   );
   if (preset) {
     return {
@@ -540,11 +649,20 @@ export interface RegisteredCandidate {
 }
 
 export function getRegisteredItems(currentLists?: ShoppingList[]): RegisteredCandidate[] {
+  if (SHARED_CATALOG_EDIT) {
+    return getEditableItemConfigs().map(item => ({
+      id: item.catalogId || `catalog-${item.name.toLocaleLowerCase('pt-BR')}`,
+      name: item.name, category: item.category, unit: item.unit,
+      price: item.defaultPrice || 0, imageUrl: item.imageUrl, notes: item.notes,
+      source: 'catalog' as const,
+    }));
+  }
   const map = new Map<string, RegisteredCandidate>();
 
   // 1. User saved configs have highest precedence
   const savedConfigs = getSavedItemConfigs();
   for (const [, cfg] of Object.entries(savedConfigs)) {
+    if (cfg.deleted) continue;
     const k = cfg.name.trim().toLowerCase();
     map.set(k, {
       id: `saved-${k}`,
@@ -561,7 +679,7 @@ export function getRegisteredItems(currentLists?: ShoppingList[]): RegisteredCan
   // 2. Catalog presets (60+ items)
   for (const preset of CATALOG_PRESETS) {
     const k = preset.name.trim().toLowerCase();
-    if (!map.has(k)) {
+    if (!map.has(k) && !savedConfigs[k]?.deleted) {
       map.set(k, {
         id: `preset-${k}`,
         name: preset.name,
@@ -579,7 +697,7 @@ export function getRegisteredItems(currentLists?: ShoppingList[]): RegisteredCan
   for (const l of listsToCheck) {
     for (const item of l.items) {
       const k = item.name.trim().toLowerCase();
-      if (!map.has(k)) {
+      if (!map.has(k) && !savedConfigs[k]?.deleted) {
         map.set(k, {
           id: `hist-${k}`,
           name: item.name,
@@ -597,7 +715,7 @@ export function getRegisteredItems(currentLists?: ShoppingList[]): RegisteredCan
   const lists = currentLists || [];
   return Array.from(map.values()).map(item => ({
     ...item,
-    price: getLatestPrice(item.name, lists) ?? item.price,
+    price: item.source === 'user_saved' ? item.price : (getLatestPrice(item.name, lists) ?? item.price),
     previousPrice: getLatestPrice(item.name, lists),
   }));
 }
