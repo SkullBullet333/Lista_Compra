@@ -73,7 +73,15 @@ function TravelEntryRow({
     <button type="button" onClick={() => { setSwipeOffset(0); onDelete(); }} className="absolute inset-y-0 right-0 flex w-[76px] items-center justify-center gap-1 bg-rose-600 text-xs font-bold text-white sm:hidden" aria-label={`Excluir ${entry.title}`}><Trash2 size={15} /><span>Excluir</span></button>
     <div onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd} style={{ transform: `translateX(${swipeOffset}px)`, touchAction: 'pan-y' }} className={`flex items-start gap-3 rounded-xl border p-3 bg-white transition-[transform,border-color] duration-150 ${entry.done ? 'travel-accent-border bg-slate-50' : 'border-slate-200'}`}>
       <button type="button" onClick={onTogglePaid} aria-label={entry.done ? `Marcar ${entry.title} como não pago` : `Marcar ${entry.title} como pago`} className={`w-7 h-7 rounded-full border flex items-center justify-center shrink-0 ${entry.done ? 'travel-accent-bg text-white travel-accent-border' : 'border-slate-300 text-slate-400'}`}>{entry.done && <Check size={16} />}</button>
-      <div className="flex-1 min-w-0 cursor-pointer" onClick={onEdit}><div className="flex items-center gap-2 flex-wrap"><span className={`text-sm font-bold text-slate-900 ${entry.done ? 'line-through' : ''}`}>{entry.title}</span><span className="travel-accent-surface text-[11px] rounded-full px-2 py-0.5">{ENTRY_TYPES[entry.type]}</span></div><div className="flex items-center gap-3 text-xs text-slate-500 mt-1">{entry.time && <span className="flex items-center gap-1"><Clock3 size={13} />{entry.time}</span>}{entry.amount > 0 && <span>{formatCurrency(entry.amount)}</span>}</div>{entry.notes && <p className="text-xs text-slate-600 mt-1">{entry.notes}</p>}</div>
+      <div className="flex-1 min-w-0 cursor-pointer" onClick={onEdit}>
+        <p className={`truncate text-sm font-bold text-slate-900 ${entry.done ? 'line-through' : ''}`}>{entry.title}</p>
+        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+          <span className="travel-accent-surface rounded-full px-2 py-0.5 text-[11px]">{ENTRY_TYPES[entry.type]}</span>
+          {entry.time && <span className="flex items-center gap-1"><Clock3 size={13} />{entry.time}</span>}
+        </div>
+        {entry.notes && <p className="mt-1 truncate text-xs text-slate-600">{entry.notes}</p>}
+      </div>
+      {entry.amount > 0 && <span className="shrink-0 whitespace-nowrap text-right text-sm font-extrabold tabular-nums text-slate-900">{formatCurrency(entry.amount)}</span>}
       <button type="button" onClick={onEdit} aria-label={`Editar ${entry.title}`} className="travel-accent-text hidden sm:flex p-1.5 text-slate-500"><Pencil size={16} /></button>
       <button type="button" onClick={onDelete} aria-label={`Excluir ${entry.title}`} className="hidden sm:flex p-1.5 text-slate-500 hover:text-rose-700"><Trash2 size={16} /></button>
     </div>

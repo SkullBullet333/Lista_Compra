@@ -739,7 +739,6 @@ function ShoppingApp() {
         {activeTab === 'lists' && (
           <ListsManager
             lists={lists}
-            activeListId={activeListId}
             isNewModalOpen={isNewListModalOpen}
             onCloseNewModal={() => setIsNewListModalOpen(false)}
             onSelectList={handleSelectList}

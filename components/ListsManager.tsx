@@ -22,7 +22,6 @@ import { getTemplates } from '@/lib/templates';
 
 interface ListsManagerProps {
   lists: ShoppingList[];
-  activeListId: string;
   onSelectList: (id: string) => void;
   onCreateList: (title: string, type: ListType, location?: string, targetBudget?: number) => void;
   onDuplicateList: (id: string) => void;
@@ -38,7 +37,6 @@ interface ListsManagerProps {
 
 export function ListsManager({
   lists,
-  activeListId,
   onSelectList,
   onCreateList,
   onDuplicateList,
@@ -107,17 +105,12 @@ export function ListsManager({
           const completedTripEntries = tripEntries.filter(entry => entry.done).length;
           const tripTotal = tripEntries.reduce((sum, entry) => sum + entry.amount, 0);
           const progress = isTravel ? (tripEntries.length ? Math.round(completedTripEntries / tripEntries.length * 100) : 0) : totals.percentDone;
-          const isActive = list.id === activeListId;
 
           return (
             <div
               key={list.id}
               onClick={() => onSelectList(list.id)}
-              className={`p-5 rounded-2xl border transition-all cursor-pointer relative group flex flex-col justify-between ${
-                isActive
-                  ? 'bg-white border-emerald-500 shadow-sm ring-2 ring-emerald-500/20'
-                  : 'bg-white border-slate-200/90 hover:border-slate-300 hover:shadow-xs'
-              }`}
+              className="relative group flex cursor-pointer flex-col justify-between rounded-2xl border border-slate-200/90 bg-white p-5 transition-all hover:border-slate-300 hover:shadow-xs"
             >
               <div>
                 {/* List Header */}

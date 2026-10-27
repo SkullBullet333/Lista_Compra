@@ -41,13 +41,15 @@ export function ItemRow({
   );
   const [swipeOffset, setSwipeOffset] = useState(0);
   const swipeStart = useRef<{ x: number; y: number; offset: number } | null>(null);
+  const didSwipe = useRef(false);
 
   useEffect(() => {
     setSwipeOffset(0);
   }, [item.checked]);
 
   const handleTouchStart = (event: React.TouchEvent) => {
-    if ((event.target as HTMLElement).closest('button, input')) {
+    didSwipe.current = false;
+    if ((event.target as HTMLElement).closest('input')) {
       swipeStart.current = null;
       return;
     }
@@ -61,6 +63,7 @@ export function ItemRow({
     const deltaX = touch.clientX - swipeStart.current.x;
     const deltaY = touch.clientY - swipeStart.current.y;
     if (Math.abs(deltaY) > Math.abs(deltaX)) return;
+    if (Math.abs(deltaX) > 6) didSwipe.current = true;
     setSwipeOffset(Math.max(-76, Math.min(0, swipeStart.current.offset + deltaX)));
   };
 
@@ -113,6 +116,13 @@ export function ItemRow({
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
+        onTouchCancel={() => { swipeStart.current = null; setSwipeOffset(0); }}
+        onClickCapture={event => {
+          if (!didSwipe.current) return;
+          event.preventDefault();
+          event.stopPropagation();
+          didSwipe.current = false;
+        }}
         style={{ transform: `translateX(${swipeOffset}px)`, touchAction: 'pan-y' }}
         className={`group relative flex items-center gap-2 sm:gap-3 p-2 sm:p-3 sm:px-4 rounded-xl border transition-[transform,background-color,border-color,opacity] duration-150 ${
         item.checked
