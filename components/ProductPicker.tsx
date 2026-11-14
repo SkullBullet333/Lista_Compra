@@ -4,7 +4,7 @@ import React, { useMemo, useState } from 'react';
 import { Check, Plus, Search, X } from 'lucide-react';
 import { CategoryId, GroceryItem, ShoppingList } from '@/types/grocery';
 import { getAllCategories } from '@/lib/categories';
-import { getLatestPrice, getRegisteredItems, RegisteredCandidate } from '@/lib/storage';
+import { getLatestPrice, getRegisteredItems, RegisteredCandidate, saveItemConfig } from '@/lib/storage';
 import { guessCategory } from '@/lib/catalog';
 
 interface ProductPickerProps {
@@ -75,6 +75,7 @@ export function ProductPicker({ list, lists, onUpdateList, onClose }: ProductPic
       price: 0,
       source: 'history',
     };
+    saveItemConfig({ name: product.name, category: product.category, unit: product.unit, defaultPrice: 0, updatedAt: Date.now() });
     toggleProduct(product);
   };
 
@@ -110,10 +111,10 @@ export function ProductPicker({ list, lists, onUpdateList, onClose }: ProductPic
           <button
             type="button"
             onClick={addTypedProduct}
-            className="w-full flex items-center gap-3 px-4 py-3 text-left bg-emerald-50 hover:bg-emerald-100 border-b border-emerald-100"
+            className="w-full flex items-center gap-3 px-4 py-3 text-left bg-white hover:bg-slate-50 border-b border-slate-100"
           >
-            <span className="w-7 h-7 rounded-full bg-emerald-600 text-white flex items-center justify-center shrink-0"><Plus size={17} strokeWidth={3} /></span>
-            <span className="text-sm font-bold text-emerald-900 truncate">Adicionar “{typedName}”</span>
+            <span className="w-7 h-7 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center shrink-0"><Plus size={17} strokeWidth={3} /></span>
+            <span className="text-sm font-bold text-slate-800 truncate">Adicionar “{typedName}”</span>
           </button>
         )}
         {visibleProducts.length === 0 ? (
@@ -131,7 +132,7 @@ export function ProductPicker({ list, lists, onUpdateList, onClose }: ProductPic
                   aria-label={`${selected ? 'Remover' : 'Adicionar'} ${product.name} ${selected ? 'da' : 'à'} lista`}
                   className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50 transition-colors"
                 >
-                  <span className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${selected ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-600'}`}>
+                  <span className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${selected ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'}`}>
                     {selected ? <Check size={17} strokeWidth={3} /> : <Plus size={17} strokeWidth={3} />}
                   </span>
                   <span className="min-w-0 flex-1 text-sm font-semibold text-slate-800 truncate">{product.name}</span>

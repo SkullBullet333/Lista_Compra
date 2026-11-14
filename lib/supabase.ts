@@ -2,13 +2,21 @@ import { createClient, Session, SupabaseClient, User } from '@supabase/supabase-
 import { SHARED_CATALOG_EDIT } from '@/lib/catalog-mode';
 import { getCustomCategories } from '@/lib/categories';
 import { getThemePreferences } from '@/lib/preferences';
-import { getSavedItemConfigs, getPriceHistory, getStoredActiveListId, getStoredLists, markItemConfigSynced, replaceSavedItemConfigs, replaceSharedCatalogItems, saveActiveListId, saveLists } from '@/lib/storage';
+import { getSavedItemConfigs, getPendingCatalogItems, acknowledgeCatalogItem, getPriceHistory, getStoredActiveListId, getStoredLists, markItemConfigSynced, replaceSavedItemConfigs, replaceSharedCatalogItems, saveActiveListId, saveLists } from '@/lib/storage';
 import { getDeletedTemplateIds, getStoredTemplateOverrides, replaceTemplatesFromSupabase } from '@/lib/templates';
 import { ListCollaborator, ListTemplate, SavedItemConfig, ShoppingList } from '@/types/grocery';
 
 let client: SupabaseClient | null | undefined;
 let backupTimer: ReturnType<typeof setTimeout> | undefined;
+let catalogWrite: Promise<unknown> = Promise.resolve();
+
+function serializeCatalogWrite<T>(operation: () => Promise<T>): Promise<T> {
+  const next = catalogWrite.then(operation, operation);
+  catalogWrite = next.catch(() => {});
+  return next;
+}
 const OFFLINE_SYNC_KEY = 'minhas_listas_pending_sync_v1';
+export const PRODUCT_IMAGES_BUCKET = 'product-images';
 
 type OfflineSyncPayload = {
   lists: ShoppingList[];
@@ -95,6 +103,70 @@ export function getSupabaseClient(): SupabaseClient | null {
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   client = url && key ? createClient(url, key, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
   return client;
+}
+
+function extensionForImage(contentType: string): string {
+  if (contentType === 'image/png') return 'png';
+  if (contentType === 'image/webp') return 'webp';
+  if (contentType === 'image/gif') return 'gif';
+  return 'jpg';
+}
+
+function remoteImageUrl(imageUrl?: string): string | null {
+  // Local data URLs can be large and must never be persisted in text columns.
+  // They stay available in local storage until an online edit uploads them.
+  return imageUrl && !imageUrl.startsWith('data:') ? imageUrl : null;
+}
+
+/**
+ * Persists a locally prepared image in Supabase Storage and returns the public
+ * URL that is stored in the existing `image_url` database columns.
+ */
+export async function uploadProductImage(image: Blob): Promise<string> {
+  const supabase = getSupabaseClient();
+  if (!supabase) throw new Error('Supabase ainda não está configurado para enviar fotos.');
+  if (!navigator.onLine) throw new Error('Conecte-se à internet para enviar a foto.');
+  if (!image.type.startsWith('image/')) throw new Error('Escolha um arquivo de imagem.');
+
+  const user = await requireUser(supabase);
+  const extension = extensionForImage(image.type);
+  const objectName = `${createClientId()}.${extension}`;
+  const objectPath = `${user.id}/${objectName}`;
+  const { error } = await supabase.storage
+    .from(PRODUCT_IMAGES_BUCKET)
+    .upload(objectPath, image, { contentType: image.type, cacheControl: '31536000', upsert: false });
+  ensureSyncSucceeded('Não foi possível enviar a foto', error);
+
+  const { data } = supabase.storage.from(PRODUCT_IMAGES_BUCKET).getPublicUrl(objectPath);
+  if (!data.publicUrl) throw new Error('O Supabase não retornou o endereço público da foto.');
+  return data.publicUrl;
+}
+
+const preparedImageUploads = new Map<string, Promise<string>>();
+
+// Reuse an offline photo's upload across backups and page reloads.
+async function prepareSyncedImage(image?: string): Promise<string | undefined> {
+  if (!image?.startsWith('data:')) return image;
+  const existing = preparedImageUploads.get(image);
+  if (existing) return existing;
+  const upload = (async () => {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(image));
+    const key = `product-photo-upload:${Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')}`;
+    try {
+      const saved = localStorage.getItem(key);
+      if (saved) return saved;
+    } catch { /* Storage may be full or unavailable; uploading still works. */ }
+    const url = await uploadProductImage(await (await fetch(image)).blob());
+    try { localStorage.setItem(key, url); } catch { /* The in-memory cache remains available. */ }
+    return url;
+  })();
+  preparedImageUploads.set(image, upload);
+  try {
+    return await upload;
+  } catch (error) {
+    preparedImageUploads.delete(image);
+    throw error;
+  }
 }
 
 export async function getCurrentSession(): Promise<Session | null> {
@@ -251,16 +323,28 @@ export async function loadItemConfigsFromSupabase(): Promise<void> {
   window.dispatchEvent(new Event('catalog-items-updated'));
 }
 
-export async function saveSharedCatalogItem(originalName: string | null, item: SavedItemConfig): Promise<void> {
+export function saveSharedCatalogItem(originalName: string | null, item: SavedItemConfig): Promise<void> {
+  return serializeCatalogWrite(async () => {
+    const pending = getPendingCatalogItems();
+    const originalKey = (originalName || item.name).trim().toLocaleLowerCase('pt-BR');
+    const nextKey = item.name.trim().toLocaleLowerCase('pt-BR');
+    await writeSharedCatalogItem(originalName, item);
+    if (pending[originalKey]) acknowledgeCatalogItem(pending[originalKey]);
+    if (nextKey !== originalKey && pending[nextKey]) acknowledgeCatalogItem(pending[nextKey]);
+  });
+}
+
+async function writeSharedCatalogItem(originalName: string | null, item: SavedItemConfig): Promise<void> {
   if (!SHARED_CATALOG_EDIT) throw new Error('O catálogo compartilhado não está ativo.');
   const supabase = getSupabaseClient();
   if (!supabase || !navigator.onLine) throw new Error('Conecte-se à internet para editar o catálogo compartilhado.');
   await requireUser(supabase);
+  const imageUrl = await prepareSyncedImage(item.imageUrl);
   const normalizedName = item.name.trim().toLocaleLowerCase('pt-BR');
   const row = {
     user_id: null, is_system: true, is_deleted: false, name: item.name.trim(),
     normalized_name: normalizedName, category_id: item.category, default_unit: item.unit,
-    default_price: item.defaultPrice || 0, image_url: item.imageUrl || null, notes: item.notes || null,
+    default_price: item.defaultPrice || 0, image_url: remoteImageUrl(imageUrl), notes: item.notes || null,
   };
   if (originalName) {
     const originalKey = originalName.trim().toLocaleLowerCase('pt-BR');
@@ -275,14 +359,24 @@ export async function saveSharedCatalogItem(originalName: string | null, item: S
       await loadItemConfigsFromSupabase();
       return;
     }
-    throw new Error('O item original não está mais no catálogo. Atualize a página antes de editar.');
+    if (!getPendingCatalogItems()[originalKey]) {
+      throw new Error('O item original não está mais no catálogo. Atualize a página antes de editar.');
+    }
   }
   const { error } = await supabase.from('catalog_items').upsert(row, { onConflict: 'user_id,normalized_name' });
   ensureSyncSucceeded(`Não foi possível salvar o item "${item.name}"`, error);
   await loadItemConfigsFromSupabase();
 }
 
-export async function deleteSharedCatalogItem(item: SavedItemConfig): Promise<void> {
+export function deleteSharedCatalogItem(item: SavedItemConfig): Promise<void> {
+  return serializeCatalogWrite(async () => {
+    const pending = getPendingCatalogItems()[item.name.trim().toLocaleLowerCase('pt-BR')];
+    await removeSharedCatalogItem(item);
+    if (pending) acknowledgeCatalogItem(pending);
+  });
+}
+
+async function removeSharedCatalogItem(item: SavedItemConfig): Promise<void> {
   if (!SHARED_CATALOG_EDIT) throw new Error('O catálogo compartilhado não está ativo.');
   const supabase = getSupabaseClient();
   if (!supabase || !navigator.onLine) throw new Error('Conecte-se à internet para excluir do catálogo compartilhado.');
@@ -291,7 +385,7 @@ export async function deleteSharedCatalogItem(item: SavedItemConfig): Promise<vo
     .is('user_id', null).eq('normalized_name', item.name.trim().toLocaleLowerCase('pt-BR'))
     .select('id').maybeSingle();
   ensureSyncSucceeded(`Não foi possível excluir o item "${item.name}"`, error);
-  if (!data) throw new Error('O item já não está no catálogo compartilhado.');
+  if (!data && !getPendingCatalogItems()[item.name.trim().toLocaleLowerCase('pt-BR')]) throw new Error('O item já não está no catálogo compartilhado.');
   await loadItemConfigsFromSupabase();
 }
 
@@ -304,7 +398,7 @@ export async function importSharedCatalogItems(items: SavedItemConfig[]): Promis
     user_id: null, is_system: true, is_deleted: false, name: item.name.trim(),
     normalized_name: item.name.trim().toLocaleLowerCase('pt-BR'), category_id: item.category,
     default_unit: item.unit, default_price: item.defaultPrice || 0,
-    image_url: item.imageUrl || null, notes: item.notes || null,
+    image_url: remoteImageUrl(item.imageUrl), notes: item.notes || null,
   }));
   const { error } = await supabase.from('catalog_items').upsert(rows, { onConflict: 'user_id,normalized_name', ignoreDuplicates: true });
   ensureSyncSucceeded('Não foi possível importar os itens', error);
@@ -321,7 +415,19 @@ export async function backupAppData(lists: ShoppingList[]): Promise<boolean> {
   const supabase = getSupabaseClient();
   if (!supabase) return false;
   const user = await requireUser(supabase);
+  if (SHARED_CATALOG_EDIT) {
+    for (const key of Object.keys(getPendingCatalogItems())) {
+      await serializeCatalogWrite(async () => {
+        const item = getPendingCatalogItems()[key];
+        if (!item) return;
+        await writeSharedCatalogItem(null, { ...item, imageUrl: await prepareSyncedImage(item.imageUrl) });
+        acknowledgeCatalogItem(item);
+      });
+    }
+  }
   for (const list of lists.filter(candidate => candidate.accessRole !== 'viewer')) {
+    const itemImages = new Map<string, string | undefined>();
+    for (const item of list.items) itemImages.set(item.id, await prepareSyncedImage(item.imageUrl));
     // A sessão validada pelo Supabase é a fonte de verdade para listas próprias.
     // O ownerId salvo no navegador pode pertencer a uma sessão anterior. Somente
     // editores de uma lista compartilhada precisam conservar o dono remoto.
@@ -365,7 +471,7 @@ export async function backupAppData(lists: ShoppingList[]): Promise<boolean> {
     const listItems = list.items.map((item, position) => ({
       id: item.id, list_id: list.id, user_id: user.id, name: item.name, normalized_name: item.name.trim().toLocaleLowerCase('pt-BR'),
       category_id: item.category, quantity: item.quantity, unit: item.unit, price: item.price, previous_price: item.previousPrice ?? null,
-      checked: item.checked, image_url: item.imageUrl || null, notes: item.notes || null, position,
+      checked: item.checked, image_url: remoteImageUrl(itemImages.get(item.id)), notes: item.notes || null, position,
       created_at: new Date(item.createdAt).toISOString(), updated_at: new Date(list.updatedAt).toISOString(),
     }));
     if (listItems.length) {
@@ -412,7 +518,7 @@ export async function backupAppData(lists: ShoppingList[]): Promise<boolean> {
     const row = {
       user_id: user.id, name: item.name, normalized_name: item.name.trim().toLocaleLowerCase('pt-BR'),
       category_id: item.category, default_unit: item.unit, default_price: item.defaultPrice || 0,
-      image_url: item.imageUrl || null, notes: item.notes || null, is_deleted: Boolean(item.deleted),
+      image_url: remoteImageUrl(await prepareSyncedImage(item.imageUrl)), notes: item.notes || null, is_deleted: Boolean(item.deleted),
     };
     let rowId = item.catalogId;
     if (!item.deleted && !rowId && item.previousName) {
@@ -444,7 +550,7 @@ export async function backupAppData(lists: ShoppingList[]): Promise<boolean> {
     const { error: deleteTemplateItemsError } = await supabase.from('template_items').delete().eq('template_id', templateId).eq('user_id', user.id);
     ensureSyncSucceeded(`Não foi possível atualizar os itens do modelo "${template.name}"`, deleteTemplateItemsError);
     if (template.items.length) {
-      const { error: templateItemsError } = await supabase.from('template_items').insert(template.items.map((item, position) => ({ template_id: templateId, user_id: user.id, name: item.name, category_id: item.category, quantity: item.quantity, unit: item.unit, default_price: item.price, image_url: item.imageUrl || null, notes: item.notes || null, position })));
+      const { error: templateItemsError } = await supabase.from('template_items').insert(template.items.map((item, position) => ({ template_id: templateId, user_id: user.id, name: item.name, category_id: item.category, quantity: item.quantity, unit: item.unit, default_price: item.price, image_url: remoteImageUrl(item.imageUrl), notes: item.notes || null, position })));
       ensureSyncSucceeded(`Não foi possível salvar os itens do modelo "${template.name}"`, templateItemsError);
     }
   }

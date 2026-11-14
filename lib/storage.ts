@@ -8,6 +8,7 @@ const LAST_NAVIGATION_KEY = 'fresh_market_last_navigation_v1';
 const LAST_NAVIGATION_MAX_AGE = 5 * 60 * 1000;
 const SAVED_CONFIGS_KEY = 'fresh_market_item_configs_v1';
 const SHARED_CATALOG_KEY = 'fresh_market_shared_catalog_v1';
+const PENDING_CATALOG_KEY = 'fresh_market_pending_catalog_v1';
 const PRICE_HISTORY_KEY = 'fresh_market_price_history_v1';
 
 export interface PriceHistoryEntry {
@@ -445,11 +446,13 @@ export function replaceSharedCatalogItems(items: SavedItemConfig[]): void {
 export function getEditableItemConfigs(): SavedItemConfig[] {
   if (SHARED_CATALOG_EDIT) {
     const shared = getSharedCatalogItems();
-    if (shared) return shared.filter(item => !item.deleted).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
-    return CATALOG_PRESETS.map(preset => ({
+    const base: SavedItemConfig[] = shared ?? CATALOG_PRESETS.map(preset => ({
       name: preset.name, category: preset.category, unit: preset.defaultUnit,
       defaultPrice: preset.defaultPrice, imageUrl: preset.imageUrl, updatedAt: 0,
-    })).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+    }));
+    const merged = new Map(base.map(item => [item.name.trim().toLocaleLowerCase('pt-BR'), item]));
+    for (const [key, item] of Object.entries(getPendingCatalogItems())) merged.set(key, item);
+    return Array.from(merged.values()).filter(item => !item.deleted).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
   }
   const configs = getSavedItemConfigs();
   const items = new Map<string, SavedItemConfig>();
@@ -467,22 +470,36 @@ export function getEditableItemConfigs(): SavedItemConfig[] {
   return Array.from(items.values()).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
 }
 
-export function saveItemConfig(config: SavedItemConfig): void {
-  if (SHARED_CATALOG_EDIT) return;
-  if (typeof window === 'undefined') return;
+export function getPendingCatalogItems(): Record<string, SavedItemConfig> {
+  if (typeof window === 'undefined') return {};
   try {
-    const current = getSavedItemConfigs();
-    const key = config.name.trim().toLocaleLowerCase('pt-BR');
-    current[key] = {
-      ...current[key],
-      ...config,
-      deleted: false,
-      updatedAt: Date.now(),
-    };
-    localStorage.setItem(SAVED_CONFIGS_KEY, JSON.stringify(current));
-  } catch (e) {
-    console.error('Failed to save item config to localStorage', e);
+    return JSON.parse(localStorage.getItem(PENDING_CATALOG_KEY) || '{}');
+  } catch {
+    return {};
   }
+}
+
+export function acknowledgeCatalogItem(item: SavedItemConfig): void {
+  const pending = getPendingCatalogItems();
+  const key = item.name.trim().toLocaleLowerCase('pt-BR');
+  if (JSON.stringify(pending[key]) !== JSON.stringify(item)) return;
+  delete pending[key];
+  localStorage.setItem(PENDING_CATALOG_KEY, JSON.stringify(pending));
+  window.dispatchEvent(new Event('catalog-items-updated'));
+}
+
+export function saveItemConfig(config: SavedItemConfig): void {
+  if (typeof window === 'undefined') return;
+  const current = SHARED_CATALOG_EDIT ? getPendingCatalogItems() : getSavedItemConfigs();
+  const key = config.name.trim().toLocaleLowerCase('pt-BR');
+  current[key] = {
+    ...current[key],
+    ...config,
+    deleted: false,
+    updatedAt: Date.now(),
+  };
+  localStorage.setItem(SHARED_CATALOG_EDIT ? PENDING_CATALOG_KEY : SAVED_CONFIGS_KEY, JSON.stringify(current));
+  window.dispatchEvent(new Event('catalog-items-updated'));
 }
 
 export function saveEditedItemConfig(originalName: string, config: SavedItemConfig): void {

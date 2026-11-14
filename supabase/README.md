@@ -1,5 +1,32 @@
 # Configuração do Supabase
 
+## Ambiente local para testar migrations
+
+O arquivo `config.toml` permite recriar banco, autenticação, Realtime e Storage localmente antes de aplicar qualquer query no projeto remoto. Instale o Docker Desktop e a CLI do Supabase; depois, na raiz do projeto, execute:
+
+```powershell
+npx supabase start
+npx supabase db reset
+npx supabase status
+```
+
+O `db reset` recria o banco e executa todas as migrations em ordem. Portanto, adicione mudanças em um novo arquivo de `supabase/migrations`, rode o reset e valide o aplicativo antes de aplicar a migration remota. Para usar o app contra o ambiente local, copie a URL da API e a chave `anon` exibidas por `npx supabase status` para `.env.local`:
+
+```env
+NEXT_PUBLIC_SUPABASE_URL="http://127.0.0.1:54321"
+NEXT_PUBLIC_SUPABASE_ANON_KEY="CHAVE_ANON_LOCAL"
+```
+
+O painel local fica em `http://127.0.0.1:54323` e a caixa de e-mails de teste em `http://127.0.0.1:54324`. O reset também cria o bucket público `product-images`; somente uma conta autenticada pode gravar, alterar ou excluir arquivos dentro da própria pasta.
+
+Para encerrar os serviços locais:
+
+```powershell
+npx supabase stop
+```
+
+## Projeto remoto
+
 1. Crie um projeto no Supabase.
 2. Em um projeto novo, execute as migrations da pasta `supabase/migrations` em ordem. Se estiver reconstruindo as tabelas deste projeto, preserve `list_invitations`, `list_members`, `profiles`, `travel_entries` e `user_preferences`; após remover as outras tabelas, execute `202610210001_rebuild_editable_catalog.sql` e depois `202610260001_template_crud.sql`. Se a reconstrução já foi aplicada, execute apenas a migration de CRUD dos modelos.
 3. Em **Authentication > Providers**, mantenha o provedor **Email** ativo. O app usa cadastro e acesso por e-mail e senha.

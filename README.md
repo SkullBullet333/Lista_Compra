@@ -21,6 +21,7 @@ Aplicativo para organizar listas de mercado e roteiros de viagem. Funciona no na
 - Node.js 20 ou superior
 - npm
 - Projeto Supabase configurado
+- Supabase CLI e Docker Desktop para executar o banco local
 
 ## Instalando Node.js e npm no Windows
 
@@ -69,6 +70,42 @@ NEXT_PUBLIC_SUPABASE_URL=https://seu-projeto.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=sua-chave-anon
 ```
 
+Para desenvolver sem alterar o projeto remoto, inicie o Supabase local na raiz do repositório:
+
+```bash
+npx supabase start
+npx supabase db reset
+```
+
+O primeiro comando inicia os serviços locais. O segundo recria o banco e aplica, em ordem, todas as migrations e dados iniciais do diretório `supabase`. Copie a **API URL** e a **anon key** mostradas pelo comando para `.env.local`; elas costumam usar `http://127.0.0.1:54321`, mas use sempre os valores exibidos no seu ambiente.
+
+Consulte os endereços e chaves do ambiente a qualquer momento:
+
+```bash
+npx supabase status
+```
+
+Por padrão, a API local fica em `http://127.0.0.1:54321`, o Studio em `http://127.0.0.1:54323` e o visualizador de e-mails Inbucket em `http://127.0.0.1:54324`. Para encerrar os serviços, execute `npx supabase stop`.
+
+Para validar uma nova query antes de aplicá-la no projeto remoto:
+
+1. Crie uma migration local em `supabase/migrations`.
+2. Execute `npx supabase db reset` para testar a instalação completa do zero.
+3. Abra o Supabase Studio local no endereço informado por `npx supabase status` e valide tabelas, políticas e dados.
+4. Execute `npm run build` antes de enviar a alteração.
+
+Não coloque a `service_role key` em variáveis `NEXT_PUBLIC_*` nem no navegador. O aplicativo usa somente a chave anônima e as políticas de acesso do banco.
+
+### Upload de imagens
+
+Fotos escolhidas no cadastro de um item são redimensionadas para até 1024 px no maior lado, convertidas para JPEG e enviadas ao bucket público `product-images`. O banco guarda a URL pública completa em `image_url`. Cada usuário autenticado só pode enviar arquivos para a própria pasta (`<id-do-usuario>/<arquivo>.jpg`); a leitura das imagens é pública.
+
+O bucket limita cada objeto a 5 MiB e aceita somente JPEG; as fotos escolhidas são convertidas antes do envio. Para testar o fluxo local, crie ou acesse uma conta no aplicativo, anexe uma foto a um item e confirme no Studio local que:
+
+- o objeto foi criado em `Storage → product-images → <id-do-usuario>`;
+- `list_items.image_url` e, quando aplicável, `catalog_items.image_url` receberam uma URL pública;
+- a foto continua visível após atualizar a página e sincronizar novamente.
+
 Execute o aplicativo em desenvolvimento:
 
 ```bash
@@ -97,6 +134,7 @@ As categorias precisam existir antes da importação. Para modelos, cada item ta
 ```bash
 npm run dev    # inicia o ambiente local
 npm run build  # gera e valida a versão de produção
+npm run lint   # verifica problemas estáticos no código
 npm run start  # inicia a versão de produção gerada
 ```
 

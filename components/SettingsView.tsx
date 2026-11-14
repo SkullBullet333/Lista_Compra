@@ -9,6 +9,9 @@ import { deleteItemConfig, formatCurrency, getEditableItemConfigs, getRegistered
 import { applyTheme, getThemePreferences, saveThemePreferences } from '@/lib/preferences';
 import { deleteTemplate, getTemplates, saveTemplate } from '@/lib/templates';
 import { backupAppData, deleteSharedCatalogItem, importSharedCatalogItems, saveSharedCatalogItem, scheduleSupabaseBackup } from '@/lib/supabase';
+import { getSupabaseClient, uploadProductImage } from '@/lib/supabase';
+import { ProductPhotoEditor } from '@/components/ProductPhotoEditor';
+import { ImagePreviewModal } from '@/components/ImagePreviewModal';
 
 export type SettingsSection = 'home' | 'categories' | 'items' | 'templates' | 'appearance';
 
@@ -81,6 +84,10 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
   const [itemUnit, setItemUnit] = useState('un');
   const [itemPrice, setItemPrice] = useState('');
   const [itemNotes, setItemNotes] = useState('');
+  const [itemImageUrl, setItemImageUrl] = useState('');
+  const [isPreparingPhoto, setIsPreparingPhoto] = useState(false);
+  const [isSavingItem, setIsSavingItem] = useState(false);
+  const [previewItem, setPreviewItem] = useState<SavedItemConfig | null>(null);
   const [isImportingItems, setIsImportingItems] = useState(false);
   const [isImportingTemplates, setIsImportingTemplates] = useState(false);
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
@@ -160,6 +167,7 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
 
   const saveItem = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (isPreparingPhoto || isSavingItem) return;
     const name = itemName.trim();
     if (!name) return;
     const normalizedName = name.toLocaleLowerCase('pt-BR');
@@ -170,37 +178,43 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
     }
     const normalizedPrice = itemPrice.includes(',') ? itemPrice.replace(/\./g, '').replace(',', '.') : itemPrice;
     const parsedPrice = Number(normalizedPrice);
-    const originalConfig = getEditableItemConfigs().find(item => item.name.toLocaleLowerCase('pt-BR') === (editingItemName || name).toLocaleLowerCase('pt-BR'));
     const config: SavedItemConfig = {
       name,
       category: itemCategory,
       unit: itemUnit.trim() || 'un',
       defaultPrice: Number.isFinite(parsedPrice) && parsedPrice >= 0 ? parsedPrice : 0,
       notes: itemNotes.trim() || undefined,
-      imageUrl: originalConfig?.imageUrl,
+      imageUrl: itemImageUrl.trim() || undefined,
       updatedAt: Date.now(),
     };
-    if (SHARED_CATALOG_EDIT) {
-      try {
+    setIsSavingItem(true);
+    try {
+      if (config.imageUrl?.startsWith('data:') && getSupabaseClient() && navigator.onLine) {
+        config.imageUrl = await uploadProductImage(await (await fetch(config.imageUrl)).blob());
+        setItemImageUrl(config.imageUrl);
+      }
+      if (SHARED_CATALOG_EDIT) {
         setNotice('Salvando no catálogo compartilhado...');
         await saveSharedCatalogItem(editingItemName, config);
-      } catch (error) {
-        setNotice(error instanceof Error ? error.message : 'Não foi possível salvar o item.');
-        return;
+      } else {
+        if (editingItemName) saveEditedItemConfig(editingItemName, config);
+        else saveItemConfig(config);
+        scheduleSupabaseBackup(getStoredLists());
       }
-    } else {
-      if (editingItemName) saveEditedItemConfig(editingItemName, config);
-      else saveItemConfig(config);
-      scheduleSupabaseBackup(getStoredLists());
+      setSavedItems(getEditableItemConfigs());
+      setItemName('');
+      setEditingItemName(null);
+      setItemCategory('feira');
+      setItemUnit('un');
+      setItemPrice('');
+      setItemNotes('');
+      setItemImageUrl('');
+      setNotice(editingItemName ? 'Item atualizado.' : 'Item cadastrado e disponível ao adicionar produtos à lista.');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Não foi possível salvar o item.');
+    } finally {
+      setIsSavingItem(false);
     }
-    setSavedItems(getEditableItemConfigs());
-    setItemName('');
-    setEditingItemName(null);
-    setItemCategory('feira');
-    setItemUnit('un');
-    setItemPrice('');
-    setItemNotes('');
-    setNotice(editingItemName ? 'Item atualizado.' : 'Item cadastrado e disponível ao adicionar produtos à lista.');
   };
 
   const editItem = (item: SavedItemConfig) => {
@@ -211,6 +225,7 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
     setItemUnit(item.unit);
     setItemPrice(item.defaultPrice ? item.defaultPrice.toFixed(2).replace('.', ',') : '');
     setItemNotes(item.notes || '');
+    setItemImageUrl(item.imageUrl || '');
     setNotice('');
   };
 
@@ -638,11 +653,14 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
       </div>{isCategoryEditorOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={() => { setIsCategoryEditorOpen(false); setEditingCategoryId(null); setCategoryName(''); }}><form onSubmit={saveCategory} onClick={event => event.stopPropagation()} className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 space-y-4"><label className="block text-xs font-bold text-slate-700">Nome<input required maxLength={40} value={categoryName} onChange={event => setCategoryName(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label><label className="flex items-center justify-between text-xs font-bold text-slate-700">Cor<input type="color" value={categoryColor} onChange={event => setCategoryColor(event.target.value)} className="h-10 w-12 cursor-pointer rounded-lg" /></label><div className="flex gap-2"><button type="button" onClick={() => { setIsCategoryEditorOpen(false); setEditingCategoryId(null); setCategoryName(''); }} className="flex-1 rounded-xl border border-slate-300 py-2.5 text-sm font-bold text-slate-700">Cancelar</button><button type="submit" className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-sm font-bold text-white">Salvar</button></div></form></div>}</> : section === 'items' ? <><div className="mb-4 hidden rounded-2xl border border-slate-200 bg-white p-4 md:block"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><FileSpreadsheet size={20} /></span><div><h2 className="text-sm font-extrabold text-slate-900">Importar itens por Excel</h2><p className="text-xs text-slate-500">Baixe os itens atuais; os já cadastrados serão ignorados na importação.</p></div></div><div className="flex gap-2"><button type="button" onClick={() => { void downloadItemImportExample(); }} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"><Download size={15} />Modelo</button><label className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700"><Upload size={15} />{isImportingItems ? 'Importando...' : 'Importar'}<input type="file" accept=".xlsx,.xls" className="hidden" disabled={isImportingItems} onChange={event => { void importItemsFromSpreadsheet(event.target.files?.[0]); event.currentTarget.value = ''; }} /></label></div></div></div><div className="grid md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-4 items-start">
         <form onSubmit={saveItem} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
           <h2 className="font-extrabold text-slate-900">{editingItemName ? 'Editar item' : 'Cadastrar item'}</h2>
+          <fieldset disabled={isSavingItem || isPreparingPhoto} className="space-y-3">
           <label className="block text-xs font-bold text-slate-700">Nome<input required maxLength={100} value={itemName} onChange={event => setItemName(event.target.value)} placeholder="Ex: Ração para cachorro" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label>
           <div className="grid grid-cols-2 gap-2"><label className="block text-xs font-bold text-slate-700">Categoria<select value={itemCategory} onChange={event => setItemCategory(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-2 py-2.5 text-sm text-slate-900">{Object.values(categories).map(category => <option key={category.id} value={category.id}>{category.label}</option>)}</select></label><label className="block text-xs font-bold text-slate-700">Unidade<input value={itemUnit} onChange={event => setItemUnit(event.target.value)} maxLength={20} placeholder="un, kg, pct..." className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label></div>
           <label className="block text-xs font-bold text-slate-700">Preço padrão (R$)<input inputMode="decimal" value={itemPrice} onChange={event => setItemPrice(event.target.value.replace(/[^0-9,.]/g, ''))} placeholder="0,00" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label>
           <label className="block text-xs font-bold text-slate-700">Observação<input value={itemNotes} onChange={event => setItemNotes(event.target.value)} placeholder="Marca ou preferência" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label>
-          <div className="flex gap-2"><button type="submit" className="flex-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 text-sm font-bold flex items-center justify-center gap-2"><Check size={16} />{editingItemName ? 'Salvar alterações' : 'Cadastrar item'}</button>{editingItemName && <button type="button" onClick={() => { setEditingItemName(null); setItemName(''); setItemCategory('feira'); setItemUnit('un'); setItemPrice(''); setItemNotes(''); }} className="rounded-xl border border-slate-300 px-3 text-sm font-semibold text-slate-600">Cancelar</button>}</div>
+          <ProductPhotoEditor value={itemImageUrl} onChange={setItemImageUrl} onBusyChange={setIsPreparingPhoto} />
+          <div className="flex gap-2"><button type="submit" className="flex-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 text-sm font-bold flex items-center justify-center gap-2"><Check size={16} />{isSavingItem ? 'Salvando...' : editingItemName ? 'Salvar alterações' : 'Cadastrar item'}</button>{editingItemName && <button type="button" onClick={() => { setEditingItemName(null); setItemName(''); setItemCategory('feira'); setItemUnit('un'); setItemPrice(''); setItemNotes(''); setItemImageUrl(''); }} className="rounded-xl border border-slate-300 px-3 text-sm font-semibold text-slate-600">Cancelar</button>}</div>
+        </fieldset>
         </form>
         <div className="bg-white border border-slate-200 rounded-2xl p-4">
           <h2 className="font-extrabold text-slate-900 mb-3">Itens cadastrados</h2>
@@ -650,7 +668,8 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
             <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input type="search" aria-label="Buscar itens cadastrados" placeholder="Buscar item ou categoria" value={itemSearch} onChange={event => setItemSearch(event.target.value)} className="w-full rounded-xl border border-slate-300 py-2.5 pl-9 pr-3 text-sm text-slate-900 placeholder:text-slate-400" />
           </label>
-          {filteredSavedItems.length ? <div className="max-h-[60vh] overflow-y-auto divide-y divide-slate-100">{filteredSavedItems.map(item => <div key={item.name.toLocaleLowerCase('pt-BR')} className="flex items-center gap-2 py-2"><div className="flex-1 min-w-0"><p className="text-sm font-semibold text-slate-800 truncate">{item.name}</p><p className="text-xs text-slate-500">{categories[item.category]?.label || 'Outros Itens'} · {item.unit}</p></div><div className="flex shrink-0 items-center gap-1"><button type="button" onClick={() => editItem(item)} className="rounded-lg px-2 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-50">Editar</button><button type="button" onClick={() => setItemToDelete(item)} aria-label={`Excluir ${item.name}`} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-50"><Trash2 size={14} />Excluir</button></div></div>)}</div> : <p className="text-sm text-slate-500 py-4">{savedItems.length ? 'Nenhum item encontrado.' : 'Nenhum item cadastrado.'}</p>}
+          {filteredSavedItems.length ? <div className="max-h-[60vh] overflow-y-auto divide-y divide-slate-100">{filteredSavedItems.map(item => <div key={item.name.toLocaleLowerCase('pt-BR')} className="flex items-center gap-2 py-2">{item.imageUrl && <button type="button" onClick={() => setPreviewItem(item)} aria-label={`Ver foto de ${item.name}`} className="shrink-0 rounded-lg border border-slate-200 overflow-hidden">{/* eslint-disable-next-line @next/next/no-img-element */}
+<img src={item.imageUrl} alt={item.name} referrerPolicy="no-referrer" className="h-11 w-11 object-cover" /></button>}<div className="flex-1 min-w-0"><p className="text-sm font-semibold text-slate-800 truncate">{item.name}</p><p className="text-xs text-slate-500">{categories[item.category]?.label || 'Outros Itens'} · {item.unit}</p></div><div className="flex shrink-0 items-center gap-1"><button type="button" onClick={() => editItem(item)} className="rounded-lg px-2 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-50">Editar</button><button type="button" onClick={() => setItemToDelete(item)} aria-label={`Excluir ${item.name}`} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-50"><Trash2 size={14} />Excluir</button></div></div>)}</div> : <p className="text-sm text-slate-500 py-4">{savedItems.length ? 'Nenhum item encontrado.' : 'Nenhum item cadastrado.'}</p>}
         </div>
       </div>{itemToDelete && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={() => setItemToDelete(null)}><div role="dialog" aria-modal="true" aria-labelledby="delete-item-title" onClick={event => event.stopPropagation()} className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 shadow-xl"><h2 id="delete-item-title" className="font-extrabold text-slate-900">Excluir item cadastrado?</h2><p className="mt-2 text-sm text-slate-600">O item <strong>{itemToDelete.name}</strong> deixará de aparecer entre os produtos cadastrados. Itens já adicionados às listas não serão removidos.</p><div className="mt-5 flex gap-2"><button type="button" onClick={() => setItemToDelete(null)} className="flex-1 rounded-xl border border-slate-300 px-3 py-2.5 text-sm font-bold text-slate-700">Cancelar</button><button type="button" onClick={() => deleteSavedItem(itemToDelete)} className="flex-1 rounded-xl bg-rose-600 px-3 py-2.5 text-sm font-bold text-white hover:bg-rose-700">Excluir</button></div></div></div>}</> : section === 'templates' ? <><div className="mb-4 hidden rounded-2xl border border-slate-200 bg-white p-4 md:block"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><FileSpreadsheet size={20} /></span><div><h2 className="text-sm font-extrabold text-slate-900">Importar modelos por Excel</h2><p className="text-xs text-slate-500">Baixe os modelos atuais; listas já cadastradas serão ignoradas na importação.</p></div></div><div className="flex gap-2"><button type="button" onClick={() => { void downloadTemplateImportExample(); }} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"><Download size={15} />Modelo</button><label className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700"><Upload size={15} />{isImportingTemplates ? 'Importando...' : 'Importar'}<input type="file" accept=".xlsx,.xls" className="hidden" disabled={isImportingTemplates} onChange={event => { void importTemplatesFromSpreadsheet(event.target.files?.[0]); event.currentTarget.value = ''; }} /></label></div></div></div><div className="grid md:grid-cols-2 gap-4 items-start">
         <form onSubmit={saveListTemplate} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
@@ -671,6 +690,7 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
         </div>
         <div className="flex items-center justify-between gap-4 rounded-xl border border-slate-200 px-3.5 py-3"><div className="flex items-center gap-3"><span className={`flex h-9 w-9 items-center justify-center rounded-lg ${theme.showImages ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{theme.showImages ? <Eye size={18} /> : <EyeOff size={18} />}</span><div><p className="text-sm font-bold text-slate-800">Exibir imagens dos itens</p><p className="text-xs text-slate-500">{theme.showImages ? 'Fotos visíveis nas listas.' : 'Fotos ocultas nas listas.'}</p></div></div><button type="button" role="switch" aria-checked={theme.showImages} onClick={() => updateTheme(theme.mode, theme.primaryColor, !theme.showImages)} className={`relative h-6 w-11 shrink-0 overflow-hidden rounded-full p-1 transition-colors ${theme.showImages ? 'bg-emerald-600' : 'bg-slate-300'}`}><span className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${theme.showImages ? 'translate-x-5' : 'translate-x-0'}`} /></button></div>
       </div>}</>}
+      <ImagePreviewModal isOpen={!!previewItem} onClose={() => setPreviewItem(null)} imageUrl={previewItem?.imageUrl} itemName={previewItem?.name || ''} category={previewItem?.category || 'outros'} />
       {importPreview && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 p-4" onClick={() => { if (!isSavingImport) { setImportPreview(null); setImportError(''); } }}>
         <div role="dialog" aria-modal="true" aria-labelledby="import-preview-title" onClick={event => event.stopPropagation()} className="flex max-h-[90dvh] w-full max-w-2xl flex-col rounded-2xl bg-white p-5 shadow-xl">
           <h2 id="import-preview-title" className="text-lg font-extrabold text-slate-900">Revisar importação</h2>

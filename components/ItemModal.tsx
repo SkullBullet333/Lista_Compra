@@ -23,12 +23,14 @@ import {
 } from 'lucide-react';
 import { GroceryItem, CategoryId, SavedItemConfig, UnitType } from '@/types/grocery';
 import { getAllCategories } from '@/lib/categories';
-import { formatCurrency, saveItemConfig, findConfiguredItem, getEditableItemConfigs } from '@/lib/storage';
+import { formatCurrency, findConfiguredItem, getEditableItemConfigs } from '@/lib/storage';
+import { prepareProductPhoto } from '@/lib/product-photo';
+import { getSupabaseClient, uploadProductImage } from '@/lib/supabase';
 
 interface ItemModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (item: Omit<GroceryItem, 'id' | 'createdAt'> & { id?: string }) => void;
+  onSave: (item: Omit<GroceryItem, 'id' | 'createdAt'> & { id?: string }) => void | Promise<void>;
   initialItem?: GroceryItem | null;
   defaultCategory?: CategoryId;
 }
@@ -54,39 +56,10 @@ function getCategoryIcon(cat: CategoryId, size = 16) {
   }
 }
 
-function prepareProductPhoto(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    if (!file.type.startsWith('image/')) {
-      reject(new Error('Escolha um arquivo de imagem.'));
-      return;
-    }
-
-    const objectUrl = URL.createObjectURL(file);
-    const photo = new window.Image();
-    photo.onload = () => {
-      URL.revokeObjectURL(objectUrl);
-      const scale = Math.min(1, 1024 / Math.max(photo.naturalWidth, photo.naturalHeight));
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.round(photo.naturalWidth * scale));
-      canvas.height = Math.max(1, Math.round(photo.naturalHeight * scale));
-      const context = canvas.getContext('2d');
-      if (!context) {
-        reject(new Error('Não foi possível preparar a foto.'));
-        return;
-      }
-      context.drawImage(photo, 0, 0, canvas.width, canvas.height);
-      try {
-        resolve(canvas.toDataURL('image/jpeg', 0.72));
-      } catch {
-        reject(new Error('Não foi possível salvar a foto.'));
-      }
-    };
-    photo.onerror = () => {
-      URL.revokeObjectURL(objectUrl);
-      reject(new Error('Não foi possível abrir essa imagem.'));
-    };
-    photo.src = objectUrl;
-  });
+async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
+  const response = await fetch(dataUrl);
+  if (!response.ok) throw new Error('Não foi possível preparar a foto para envio.');
+  return response.blob();
 }
 
 function ItemModalForm({
@@ -96,7 +69,7 @@ function ItemModalForm({
   defaultCategory = 'feira',
 }: {
   onClose: () => void;
-  onSave: (item: Omit<GroceryItem, 'id' | 'createdAt'> & { id?: string }) => void;
+  onSave: (item: Omit<GroceryItem, 'id' | 'createdAt'> & { id?: string }) => void | Promise<void>;
   initialItem?: GroceryItem | null;
   defaultCategory?: CategoryId;
 }) {
@@ -112,6 +85,7 @@ function ItemModalForm({
   const [imageError, setImageError] = useState(false);
   const [photoError, setPhotoError] = useState('');
   const [isProcessingPhoto, setIsProcessingPhoto] = useState(false);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [autoMatchedSource, setAutoMatchedSource] = useState<string | null>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
@@ -177,40 +151,43 @@ function ItemModalForm({
     setAutoMatchedSource('Catálogo');
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || isProcessingPhoto) return;
+    if (!name.trim() || isProcessingPhoto || isUploadingPhoto) return;
 
     const trimmedName = name.trim();
     const finalUnit = unit.trim() || 'un';
     const finalCategory = category;
-    const finalImage = imageUrl.trim() || undefined;
+    let finalImage = imageUrl.trim() || undefined;
     const finalNotes = notes.trim() || undefined;
 
-    // 1. Salvar configuração do item na memória para futuras listas
-    saveItemConfig({
-      name: trimmedName,
-      unit: finalUnit,
-      category: finalCategory,
-      imageUrl: finalImage,
-      defaultPrice: parsedPrice > 0 ? parsedPrice : undefined,
-      notes: finalNotes,
-      updatedAt: Date.now(),
-    });
-
-    // 2. Salvar o item na lista ativa
-    onSave({
-      ...(initialItem ? { id: initialItem.id } : {}),
-      name: trimmedName,
-      category: finalCategory,
-      quantity: Math.max(0.01, quantity),
-      unit: finalUnit,
-      price: parsedPrice,
-      imageUrl: finalImage,
-      notes: finalNotes,
-      checked: initialItem?.checked ?? false,
-    });
-    onClose();
+    // Keep the app local-first when Supabase or the network is unavailable.
+    // The pending backup uploads locally stored photos when the connection returns.
+    if (finalImage?.startsWith('data:') && getSupabaseClient() && navigator.onLine) {
+      setPhotoError('');
+      setIsUploadingPhoto(true);
+      try {
+        finalImage = await uploadProductImage(await dataUrlToBlob(finalImage));
+        setImageUrl(finalImage);
+      } catch (error) {
+        setPhotoError(error instanceof Error ? error.message : 'Não foi possível enviar a foto.');
+        setIsUploadingPhoto(false);
+        return;
+      }
+    }
+    try {
+      await onSave({
+        ...(initialItem ? { id: initialItem.id } : {}),
+        name: trimmedName, category: finalCategory, quantity: Math.max(0.01, quantity),
+        unit: finalUnit, price: parsedPrice, imageUrl: finalImage, notes: finalNotes,
+        checked: initialItem?.checked ?? false,
+      });
+      onClose();
+    } catch (error) {
+      setPhotoError(error instanceof Error ? error.message : 'Não foi possível salvar o item.');
+    } finally {
+      setIsUploadingPhoto(false);
+    }
   };
 
   return (
@@ -498,6 +475,7 @@ function ItemModalForm({
               </button>
             </div>
             {photoError && <p role="alert" className="text-xs font-semibold text-rose-600">{photoError}</p>}
+            {isUploadingPhoto && <p role="status" className="text-xs font-semibold text-emerald-700">Enviando foto com segurança...</p>}
             {isProcessingPhoto && <p role="status" className="text-xs font-semibold text-emerald-700">Preparando foto...</p>}
 
             {/* Live Image Preview */}
@@ -560,11 +538,11 @@ function ItemModalForm({
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={isProcessingPhoto}
+            disabled={isProcessingPhoto || isUploadingPhoto}
             className="flex-1 py-3 px-5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-wait active:scale-98 text-white font-extrabold text-sm sm:text-base shadow-md shadow-emerald-700/20 flex items-center justify-center gap-2 transition-all cursor-pointer"
           >
             <Check size={18} strokeWidth={2.5} />
-            <span>{initialItem ? 'Salvar Alterações' : 'Adicionar à Lista'}</span>
+            <span>{isUploadingPhoto ? 'Enviando foto...' : initialItem ? 'Salvar Alterações' : 'Adicionar à Lista'}</span>
           </button>
         </div>
       </div>

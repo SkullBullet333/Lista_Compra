@@ -1,5 +1,14 @@
 @import "tailwindcss";
 
+/* Keep iOS from zooming the viewport when a text field receives focus. */
+@media (max-width: 767px), (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
 :root {
   --font-sans: Arial, Helvetica, sans-serif;
   color-scheme: light;
