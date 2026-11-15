@@ -113,9 +113,23 @@ function extensionForImage(contentType: string): string {
 }
 
 function remoteImageUrl(imageUrl?: string): string | null {
-  // Local data URLs can be large and must never be persisted in text columns.
-  // They stay available in local storage until an online edit uploads them.
-  return imageUrl && !imageUrl.startsWith('data:') ? imageUrl : null;
+  // Prepared raster photos can be stored inline if Storage is not provisioned yet.
+  if (imageUrl?.startsWith('data:') && !/^data:image\/(jpeg|png|webp|gif);base64,/i.test(imageUrl)) return null;
+  return imageUrl || null;
+}
+
+function isMissingProductImagesBucket(error: unknown): boolean {
+  const failure = error as { message?: string; code?: string; error?: string } | null;
+  return /nosuchbucket|bucket.?not.?found/i.test([failure?.code, failure?.error, failure?.message].join(' '));
+}
+
+async function inlineProductImage(image: Blob): Promise<string> {
+  const bytes = new Uint8Array(await image.arrayBuffer());
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 32768) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 32768));
+  }
+  return `data:${image.type};base64,${btoa(binary)}`;
 }
 
 /**
@@ -135,6 +149,7 @@ export async function uploadProductImage(image: Blob): Promise<string> {
   const { error } = await supabase.storage
     .from(PRODUCT_IMAGES_BUCKET)
     .upload(objectPath, image, { contentType: image.type, cacheControl: '31536000', upsert: false });
+  if (isMissingProductImagesBucket(error)) return inlineProductImage(image);
   ensureSyncSucceeded('Não foi possível enviar a foto', error);
 
   const { data } = supabase.storage.from(PRODUCT_IMAGES_BUCKET).getPublicUrl(objectPath);
@@ -157,7 +172,10 @@ async function prepareSyncedImage(image?: string): Promise<string | undefined> {
       if (saved) return saved;
     } catch { /* Storage may be full or unavailable; uploading still works. */ }
     const url = await uploadProductImage(await (await fetch(image)).blob());
-    try { localStorage.setItem(key, url); } catch { /* The in-memory cache remains available. */ }
+    // Retry Storage after a reload, so provisioning the bucket takes effect.
+    if (!url.startsWith('data:')) {
+      try { localStorage.setItem(key, url); } catch { /* The in-memory cache remains available. */ }
+    }
     return url;
   })();
   preparedImageUploads.set(image, upload);
@@ -425,7 +443,9 @@ export async function backupAppData(lists: ShoppingList[]): Promise<boolean> {
       });
     }
   }
-  for (const list of lists.filter(candidate => candidate.accessRole !== 'viewer')) {
+  // The server timestamps updates. Send older edits first to preserve recency
+  // when several lists were edited offline and are synchronized together.
+  for (const list of lists.filter(candidate => candidate.accessRole !== 'viewer').sort((a, b) => a.updatedAt - b.updatedAt)) {
     const itemImages = new Map<string, string | undefined>();
     for (const item of list.items) itemImages.set(item.id, await prepareSyncedImage(item.imageUrl));
     // A sessão validada pelo Supabase é a fonte de verdade para listas próprias.
@@ -441,16 +461,20 @@ export async function backupAppData(lists: ShoppingList[]): Promise<boolean> {
     };
     const { data: existingList, error: lookupError } = await supabase
       .from('shopping_lists')
-      .select('id')
+      .select('id,updated_at')
       .eq('id', list.id)
       .maybeSingle();
     ensureSyncSucceeded(`Não foi possível conferir a lista "${list.title}"`, lookupError);
 
     let listError: unknown = null;
     if (existingList) {
-      const { id: _id, user_id: _userId, ...changes } = listRow;
-      const result = await supabase.from('shopping_lists').update(changes).eq('id', list.id);
-      listError = result.error;
+      // Backing up an unchanged list must not make it look recently edited.
+      const remoteUpdatedAt = Date.parse(String(existingList.updated_at));
+      if (!Number.isFinite(remoteUpdatedAt) || list.updatedAt > remoteUpdatedAt) {
+        const { id: _id, user_id: _userId, ...changes } = listRow;
+        const result = await supabase.from('shopping_lists').update(changes).eq('id', list.id);
+        listError = result.error;
+      }
     } else if (list.accessRole === 'editor') {
       listError = { message: 'A lista compartilhada não está mais disponível para edição.', code: '42501' };
     } else {

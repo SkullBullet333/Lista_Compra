@@ -38,7 +38,7 @@ export function Navbar({
   onDuplicateList,
   onRequestDeleteList,
 }: NavbarProps) {
-  const isInsideShoppingList = activeTab === 'shopping';
+  const isInsideShoppingList = activeTab === 'shopping' || activeTab === 'stats';
   const [isHomeMenuOpen, setIsHomeMenuOpen] = useState(false);
   const [isListMenuOpen, setIsListMenuOpen] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
@@ -51,8 +51,8 @@ export function Navbar({
       if (!homeMenuRef.current?.contains(event.target as Node)) setIsHomeMenuOpen(false);
       if (!mobileListMenuRef.current?.contains(event.target as Node) && !desktopListMenuRef.current?.contains(event.target as Node)) setIsListMenuOpen(false);
     };
-    document.addEventListener('mousedown', closeOutside);
-    return () => document.removeEventListener('mousedown', closeOutside);
+    document.addEventListener('pointerdown', closeOutside, true);
+    return () => document.removeEventListener('pointerdown', closeOutside, true);
   }, []);
 
   useEffect(() => {
@@ -106,9 +106,6 @@ export function Navbar({
                 <span className="text-sm font-extrabold text-slate-900 block truncate">
                   {listTitle || 'Lista de Compras'}
                 </span>
-                <span className="text-[10px] text-slate-500 font-medium block -mt-0.5">
-                  {itemCount} {listType === 'travel' ? (itemCount === 1 ? 'atividade' : 'atividades') : (itemCount === 1 ? 'item' : 'itens')}
-                </span>
               </div>
             </div>
 
@@ -132,18 +129,18 @@ export function Navbar({
             </button>
           ) : <div className="flex items-center gap-2 text-left">
             <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-bold shadow-xs">
-              <ShoppingCart size={17} strokeWidth={2.5} />
+              {listType === 'travel' ? <Plane size={17} strokeWidth={2.5} /> : <ShoppingCart size={17} strokeWidth={2.5} />}
             </div>
             <div className="flex flex-col">
-              <span className="text-base font-extrabold tracking-tight text-slate-900">
-                {activeTab === 'lists' ? 'Minhas Listas' : 'Fresh Market'}
+              <span className="text-base font-extrabold tracking-tight text-emerald-800">
+                {activeTab === 'lists' ? (listType === 'travel' ? 'Viagens e Destinos' : 'Listas de Compras') : 'Fresh Market'}
               </span>
               {activeTab !== 'lists' && <span className="text-[10px] text-slate-500 font-medium -mt-1 hidden sm:block">Lista & Calculadora</span>}
             </div>
           </div>}
 
           {/* Zone 2: Navigation Links */}
-          {activeTab !== 'lists' && activeTab !== 'settings' && <nav className="flex items-center gap-1 sm:gap-2">
+          {activeTab !== 'lists' && activeTab !== 'settings' && <nav className={`${activeTab === 'stats' ? 'hidden md:flex' : 'flex'} items-center gap-1 sm:gap-2`}>
             <button
               onClick={() => onSelectTab('shopping')}
               className={`px-3 py-1.5 text-xs sm:text-sm font-semibold rounded-lg transition-colors whitespace-nowrap flex items-center gap-1.5 ${
@@ -166,7 +163,7 @@ export function Navbar({
               className="px-3 py-1.5 text-xs sm:text-sm font-semibold rounded-lg transition-colors whitespace-nowrap flex items-center gap-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-50"
             >
               <Layers size={15} />
-              <span>Minhas Listas</span>
+              <span>{listType === 'travel' ? 'Viagens e Destinos' : 'Listas de Compras'}</span>
             </button>
 
             {listType !== 'travel' && <button

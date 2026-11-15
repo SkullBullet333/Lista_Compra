@@ -6,7 +6,6 @@ import { Navbar } from '@/components/Navbar';
 import { ShoppingView } from '@/components/ShoppingView';
 import { TravelView } from '@/components/TravelView';
 import { ListsManager } from '@/components/ListsManager';
-import { StatsView } from '@/components/StatsView';
 import { SettingsView, SettingsSection } from '@/components/SettingsView';
 import { ItemModal } from '@/components/ItemModal';
 import { ListEditModal } from '@/components/ListEditModal';
@@ -320,9 +319,19 @@ function ShoppingApp() {
     handleUpdateLists(updatedLists);
   };
 
+  const closePopups = () => {
+    setIsNewListModalOpen(false);
+    setIsProductPickerOpen(false);
+    setIsItemModalOpen(false);
+    setEditingItem(null);
+    setIsListEditModalOpen(false);
+    setListToDelete(null);
+    setPreviewImage(null);
+  };
+
   // Switch active list (empurra estado para histórico do celular)
   const handleSelectList = (id: string) => {
-    setIsProductPickerOpen(false);
+    closePopups();
     const selectedList = lists.find(list => list.id === id);
     setListTypeFilter(selectedList?.type || 'market');
     setActiveListId(id);
@@ -334,7 +343,7 @@ function ShoppingApp() {
   };
 
   const handleSelectTab = (tab: 'shopping' | 'lists' | 'stats' | 'settings') => {
-    setIsProductPickerOpen(false);
+    closePopups();
     setActiveTab(tab);
     if (typeof window !== 'undefined') {
       window.history.pushState({ screen: tab }, '');
@@ -655,7 +664,7 @@ function ShoppingApp() {
   if (isSupabaseConfigured() && !session) return <AuthView />;
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] text-[#0f172a] flex flex-col font-sans">
+    <div data-list-type={activeTab === 'settings' ? undefined : activeTab === 'lists' ? listTypeFilter : activeList.type || 'market'} className="min-h-screen bg-[#f8fafc] text-[#0f172a] flex flex-col font-sans">
       {/* Top Navbar */}
       <Navbar
         activeTab={activeTab}
@@ -670,6 +679,7 @@ function ShoppingApp() {
           }
         }}
         onNewList={() => {
+          closePopups();
           setActiveTab('lists');
           setIsNewListModalOpen(true);
           window.history.pushState({ modal: 'newList' }, '');
@@ -686,7 +696,7 @@ function ShoppingApp() {
           handleSelectTab('lists');
         }}
         listTitle={activeList?.title}
-        listType={activeList.type || 'market'}
+        listType={activeTab === 'lists' ? listTypeFilter : activeList.type || 'market'}
         itemCount={activeList.type === 'travel' ? (activeList.travelEntries?.length || 0) : (activeList.items?.length || 0)}
         onOpenListEdit={() => {
           setIsListEditModalOpen(true);
@@ -697,16 +707,19 @@ function ShoppingApp() {
         onDuplicateList={() => handleDuplicateList(activeList.id)}
         onRequestDeleteList={() => setListToDelete(activeList)}
       />
-      {syncFailure ? <div role="alert" className="fixed top-16 left-1/2 z-40 w-[min(90vw,36rem)] -translate-x-1/2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-bold text-rose-900 shadow-lg">Falha na sincronização: {syncFailure}</div>
-        : syncNotice && <div role="status" className="fixed top-16 left-1/2 -translate-x-1/2 z-40 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-bold text-emerald-900 shadow-lg">{syncNotice}</div>}
+      {(syncFailure || syncNotice) && <div role={syncFailure ? 'alert' : 'status'} className={`fixed top-16 left-1/2 z-40 flex w-[min(90vw,36rem)] -translate-x-1/2 items-start gap-3 rounded-xl border px-4 py-2 text-xs font-bold shadow-lg ${syncFailure ? 'border-rose-200 bg-rose-50 text-rose-900' : 'border-emerald-200 bg-emerald-50 text-emerald-900'}`}>
+        <span className="min-w-0 flex-1 break-words">{syncFailure ? `Falha na sincronização: ${syncFailure}` : syncNotice}</span>
+        <button type="button" aria-label="Fechar aviso" onClick={() => { setSyncFailure(''); setSyncNotice(''); }} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-lg hover:bg-black/5">×</button>
+      </div>}
 
       {/* Main Content Area */}
       <main className="flex-1">
         {activeTab === 'shopping' && activeList.type === 'travel' && (
-          <TravelView list={activeList} onUpdateList={handleUpdateActiveList} />
+          <TravelView key={activeList.id} list={activeList} onUpdateList={handleUpdateActiveList} />
         )}
-        {activeTab === 'shopping' && activeList.type !== 'travel' && (
+        {(activeTab === 'shopping' || activeTab === 'stats') && activeList.type !== 'travel' && (
           <ShoppingView
+            key={activeList.id}
             list={activeList}
             lists={lists}
             onUpdateList={handleUpdateActiveList}
@@ -733,11 +746,15 @@ function ShoppingApp() {
               }
             }}
             onSwitchToLists={() => handleSelectTab('lists')}
+            onOpenSummary={() => handleSelectTab('stats')}
+            onCloseSummary={() => handleSelectTab('shopping')}
+            isSummary={activeTab === 'stats'}
           />
         )}
 
         {activeTab === 'lists' && (
           <ListsManager
+            key={listTypeFilter}
             lists={lists}
             isNewModalOpen={isNewListModalOpen}
             onCloseNewModal={() => setIsNewListModalOpen(false)}
@@ -761,7 +778,7 @@ function ShoppingApp() {
               }
             }}
             listFilter={listTypeFilter}
-            onFilterChange={setListTypeFilter}
+            onFilterChange={filter => { closePopups(); setListTypeFilter(filter); }}
           />
         )}
 
@@ -772,12 +789,6 @@ function ShoppingApp() {
           }
         }} />}
 
-        {activeTab === 'stats' && (
-          <StatsView
-            list={activeList}
-            onSwitchToShopping={() => handleSelectTab('shopping')}
-          />
-        )}
       </main>
 
       {/* Modals */}

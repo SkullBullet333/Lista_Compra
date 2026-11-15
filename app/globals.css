@@ -13,6 +13,7 @@
   --font-sans: Arial, Helvetica, sans-serif;
   color-scheme: light;
   --app-primary: #059669;
+  --app-market-color: #059669;
   --app-travel-color: #0284c7;
   --theme-bg: #f8fafc;
   --theme-surface: #ffffff;
@@ -62,6 +63,12 @@
 
 html, body { background-color: var(--theme-bg); color: var(--theme-text); }
 body { transition: background-color 160ms ease, color 160ms ease; }
+
+.shopping-totals-bar {
+  background-color: var(--theme-surface);
+  box-shadow: 0 -4px 16px var(--theme-shadow);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
 
 [class*="bg-emerald-500"], [class*="bg-emerald-600"] { background-color: var(--app-primary) !important; }
 [class*="border-emerald-500"], [class*="border-emerald-600"] { border-color: var(--app-primary) !important; }
@@ -129,7 +136,53 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--app-primary); 
 [data-theme="black"] header { background-color: rgba(9, 9, 9, .96) !important; }
 [data-theme="black"] [class*="shadow-[0_-4px"] { background-color: rgba(9, 9, 9, .97) !important; }
 
-/* Cartões de pagamento da viagem: cores próprias para manter contraste nos temas escuros. */
+/* Accent colors follow the section without changing the saved market color. */
+[data-list-type="market"] { --app-primary: var(--app-market-color); }
+[data-list-type="travel"] { --app-primary: var(--app-travel-color); }
+
+[data-list-type] :is(.bg-emerald-50, .bg-emerald-100, [class~="bg-emerald-200/80"], [class*="bg-emerald-50/"]) {
+  background-color: color-mix(in srgb, var(--app-primary) 14%, var(--theme-surface)) !important;
+}
+[data-list-type] :is(.text-emerald-600, .text-emerald-900, .text-emerald-950) {
+  color: color-mix(in srgb, var(--app-primary) 65%, var(--theme-text)) !important;
+}
+[data-list-type] :is([class*="border-emerald-1"], [class*="border-emerald-2"], [class*="border-emerald-3"], [class*="border-emerald-4"]) {
+  border-color: color-mix(in srgb, var(--app-primary) 45%, var(--theme-border)) !important;
+}
+[data-list-type] .hover\:bg-emerald-700:hover {
+  background-color: color-mix(in srgb, var(--app-primary) 88%, #000) !important;
+}
+
+.list-type-toolbar {
+  border-bottom: 2px solid var(--theme-border);
+}
+.list-type-tab {
+  position: relative;
+  border: 0;
+  background: transparent;
+  color: var(--theme-text-muted);
+  transition: color 150ms ease;
+}
+.list-type-tab[aria-selected="true"],
+.list-type-tab:hover {
+  color: color-mix(in srgb, var(--tab-accent) 65%, var(--theme-text));
+}
+.list-type-tab[aria-selected="true"]::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -2px;
+  height: 3px;
+  background-color: var(--tab-accent);
+  border-radius: 3px 3px 0 0;
+}
+.list-type-tab:focus-visible {
+  outline: 2px solid var(--tab-accent);
+  outline-offset: 4px;
+}
+
+/* Payment filters use the configured travel accent in every theme. */
 .travel-payment-card {
   border-color: var(--theme-border);
   background: var(--theme-surface);
@@ -138,22 +191,14 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--app-primary); 
 
 .travel-payment-card strong { color: var(--theme-text); }
 
-.travel-payment-card--unpaid.is-active {
-  border-color: #fbbf24;
-  background: #fffbeb;
-  color: #92400e;
-  box-shadow: 0 1px 3px rgba(180, 83, 9, .12);
+.travel-payment-card.is-active {
+  border-color: var(--app-travel-color);
+  background: color-mix(in srgb, var(--app-travel-color) 16%, var(--theme-surface));
+  color: color-mix(in srgb, var(--app-travel-color) 65%, var(--theme-text));
+  box-shadow: 0 1px 3px var(--theme-shadow);
 }
 
-.travel-payment-card--unpaid.is-active strong { color: #78350f; }
-
-.travel-payment-card--paid.is-active {
-  border-color: #6ee7b7;
-  background: #ecfdf5;
-  color: #047857;
-}
-
-.travel-payment-card--paid.is-active strong { color: #065f46; }
+.travel-payment-card.is-active strong { color: inherit; }
 
 .app-undo-toast {
   border: 1px solid var(--theme-border);
@@ -164,21 +209,3 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--app-primary); 
 
 .app-undo-toast__action { color: var(--app-primary); }
 .app-undo-toast__action:hover { filter: brightness(.88); }
-
-:is([data-theme="dark"], [data-theme="black"]) .travel-payment-card--unpaid.is-active {
-  border-color: #d97706;
-  background: linear-gradient(135deg, #3b250d, #24190b);
-  color: #fde68a;
-  box-shadow: inset 0 1px 0 rgba(253, 230, 138, .08), 0 8px 20px rgba(0, 0, 0, .22);
-}
-
-:is([data-theme="dark"], [data-theme="black"]) .travel-payment-card--unpaid.is-active strong { color: #fef3c7; }
-
-:is([data-theme="dark"], [data-theme="black"]) .travel-payment-card--paid.is-active {
-  border-color: #059669;
-  background: linear-gradient(135deg, #063b32, #072b26);
-  color: #a7f3d0;
-  box-shadow: inset 0 1px 0 rgba(167, 243, 208, .08), 0 8px 20px rgba(0, 0, 0, .22);
-}
-
-:is([data-theme="dark"], [data-theme="black"]) .travel-payment-card--paid.is-active strong { color: #d1fae5; }

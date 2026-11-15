@@ -100,6 +100,8 @@ Não coloque a `service_role key` em variáveis `NEXT_PUBLIC_*` nem no navegador
 
 Fotos escolhidas no cadastro de um item são redimensionadas para até 1024 px no maior lado, convertidas para JPEG e enviadas ao bucket público `product-images`. O banco guarda a URL pública completa em `image_url`. Cada usuário autenticado só pode enviar arquivos para a própria pasta (`<id-do-usuario>/<arquivo>.jpg`); a leitura das imagens é pública.
 
+Se o Supabase retornar `Bucket not found` ou `NoSuchBucket`, o aplicativo salva a foto compactada diretamente em `image_url`, junto ao cadastro e à lista, para não bloquear a sincronização. Esse recurso de compatibilidade ocupa mais espaço no banco. Aplique `supabase/migrations/202611050001_product_images_storage.sql` no projeto remoto para criar o bucket e suas permissões; após reabrir o aplicativo, as fotos locais voltam a tentar o envio pelo Storage. Falhas de permissão ou outros erros de envio continuam sendo informados e mantêm as alterações pendentes.
+
 O bucket limita cada objeto a 5 MiB e aceita somente JPEG; as fotos escolhidas são convertidas antes do envio. Para testar o fluxo local, crie ou acesse uma conta no aplicativo, anexe uma foto a um item e confirme no Studio local que:
 
 - o objeto foi criado em `Storage → product-images → <id-do-usuario>`;

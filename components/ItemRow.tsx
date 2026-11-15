@@ -191,10 +191,10 @@ export function ItemRow({
             </>
           )}
         </div>
-        {item.previousPrice !== undefined && item.previousPrice > 0 && item.price > 0 && (
-          <div className={`flex items-center gap-1 mt-0.5 text-[10px] font-bold ${priceDifference > 0 ? 'text-rose-600' : priceDifference < 0 ? 'text-emerald-700' : 'text-slate-400'}`}>
-            {priceDifference > 0 ? <TrendingUp size={11} /> : priceDifference < 0 ? <TrendingDown size={11} /> : null}
-            <span>{priceDifference === 0 ? 'Mesmo preço anterior' : `${priceDifference > 0 ? 'Mais caro' : 'Mais barato'} ${formatCurrency(Math.abs(priceDifference))}`}</span>
+        {item.previousPrice !== undefined && item.previousPrice > 0 && item.price > 0 && priceDifference !== 0 && (
+          <div className={`flex items-center gap-1 mt-0.5 text-[10px] font-bold ${priceDifference > 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
+            {priceDifference > 0 ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
+            <span>{`${priceDifference > 0 ? 'Mais caro' : 'Mais barato'} ${formatCurrency(Math.abs(priceDifference))}`}</span>
           </div>
         )}
       </div>

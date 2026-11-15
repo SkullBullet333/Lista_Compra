@@ -9,9 +9,10 @@ import { calculateListTotals, formatCurrency } from '@/lib/storage';
 interface StatsViewProps {
   list: ShoppingList;
   onSwitchToShopping: () => void;
+  embedded?: boolean;
 }
 
-export function StatsView({ list, onSwitchToShopping }: StatsViewProps) {
+export function StatsView({ list, onSwitchToShopping, embedded = false }: StatsViewProps) {
   const totals = calculateListTotals(list.items);
   const categories = getAllCategories();
 
@@ -38,14 +39,14 @@ export function StatsView({ list, onSwitchToShopping }: StatsViewProps) {
   }).filter(c => c.count > 0).sort((a, b) => b.total - a.total);
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 pb-28">
+    <div className={embedded ? '' : 'max-w-4xl mx-auto px-4 sm:px-6 py-6 pb-28'}>
       <div className="mb-6">
-        <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
+        <h1 className={`${embedded ? 'text-lg' : 'text-2xl'} font-extrabold text-slate-900 tracking-tight`}>
           Resumo Financeiro & Totais
         </h1>
-        <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
+        {!embedded && <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
           Lista: <strong className="text-slate-800">{list.title}</strong>
-        </p>
+        </p>}
       </div>
 
       {/* Top 3 KPI Cards */}
@@ -138,7 +139,7 @@ export function StatsView({ list, onSwitchToShopping }: StatsViewProps) {
         )}
       </div>
 
-      <div className="flex justify-center">
+      {!embedded && <div className="flex justify-center">
         <button
           onClick={onSwitchToShopping}
           className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-2"
@@ -146,7 +147,7 @@ export function StatsView({ list, onSwitchToShopping }: StatsViewProps) {
           <ShoppingBag size={15} />
           <span>Voltar para Lista de Compras</span>
         </button>
-      </div>
+      </div>}
     </div>
   );
 }

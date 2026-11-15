@@ -14,7 +14,7 @@ function runtime(shared, state = { local: new Map(), catalog: [], writes: [], up
   const client = {
     auth: { getUser: async () => ({ data: { user: { id: 'tester' } }, error: null }) },
     storage: { from: () => ({
-      upload: async () => { state.uploads++; return { error: null }; },
+      upload: async () => { state.uploads++; return { error: state.storageError || null }; },
       getPublicUrl: object => ({ data: { publicUrl: `https://storage.test/${object}` } }),
     }) },
     from(table) {
@@ -48,6 +48,10 @@ function runtime(shared, state = { local: new Map(), catalog: [], writes: [], up
               } else if (operation === 'update') rows.forEach(row => Object.assign(row, payload));
               return { data: single ? rows[0] || null : rows, error: null };
             }
+            if (table === 'shopping_lists' && operation === 'select' && state.remoteLists) {
+              const rows = state.remoteLists.filter(row => filters.every(filter => filter(row)));
+              return { data: single ? rows[0] || null : rows, error: null };
+            }
             if (operation !== 'select') state.writes.push({ table, operation, payload });
             return { data: single ? null : [], error: null };
           }).then(resolve, reject);
@@ -66,7 +70,7 @@ function runtime(shared, state = { local: new Map(), catalog: [], writes: [], up
   const modules = new Map();
   const context = vm.createContext({
     console, localStorage, window: { dispatchEvent() {} }, navigator: { onLine: true },
-    Event, CustomEvent, crypto: webcrypto, TextEncoder, Uint8Array, fetch,
+    Event, CustomEvent, crypto: webcrypto, TextEncoder, Uint8Array, fetch, btoa,
     setTimeout, clearTimeout,
     process: { env: { NEXT_PUBLIC_SUPABASE_URL: 'https://db.test', NEXT_PUBLIC_SUPABASE_ANON_KEY: 'test' } },
   });
@@ -121,6 +125,30 @@ async function main() {
   await personal.sync.backupAppData([list]);
   assert.match(personal.state.catalog[0].image_url, /^https:/);
   assert.equal(personal.state.uploads, 1, 'Personal catalog also uploads offline photos once');
-  console.log('Passed: product persistence, reload, photo reuse, retry, newer edits, pending rename/delete, personal catalog.');
+  const missingBucket = runtime(true);
+  missingBucket.state.storageError = { message: 'Bucket not found', code: 'NoSuchBucket' };
+  missingBucket.storage.saveItemConfig(config);
+  await missingBucket.sync.backupAppData([list]);
+  assert.equal(missingBucket.state.catalog[0].image_url, photo, 'Missing bucket preserves photo in the catalog');
+  assert.equal(missingBucket.state.writes.find(write => write.table === 'list_items').payload[0].image_url, photo, 'Missing bucket does not block list synchronization');
+  assert.equal(Object.keys(missingBucket.storage.getPendingCatalogItems()).length, 0, 'Missing bucket does not leave sync stuck on every launch');
+  missingBucket.state.storageError = null;
+  await runtime(true, missingBucket.state).sync.backupAppData([list]);
+  assert.match(missingBucket.state.writes.filter(write => write.table === 'list_items').at(-1).payload[0].image_url, /^https:/, 'Storage is retried after the bucket is provisioned');
+  const forbidden = runtime(true);
+  forbidden.state.storageError = { message: 'Unauthorized', code: '403' };
+  forbidden.storage.saveItemConfig(config);
+  await assert.rejects(forbidden.sync.backupAppData([list]), /Unauthorized/, 'Other Storage errors must remain visible');
+  assert.ok(forbidden.storage.getPendingCatalogItems()['produto novo']);
+  const recency = runtime(true);
+  const newest = { ...list, id: 'newest', title: 'Newest market', items: [], updatedAt: 3000 };
+  const untouched = { ...list, id: 'untouched', title: 'Untouched', items: [], updatedAt: 1000 };
+  const older = { ...list, id: 'older', title: 'Older travel', type: 'travel', items: [], updatedAt: 2000 };
+  recency.state.remoteLists = [newest, untouched, older].map(entry => ({ id: entry.id, updated_at: new Date(1000).toISOString() }));
+  const unordered = [newest, untouched, older];
+  await recency.sync.backupAppData(unordered);
+  assert.deepEqual(recency.state.writes.filter(write => write.table === 'shopping_lists' && write.operation === 'update').map(write => write.payload.title), ['Older travel', 'Newest market'], 'Only edited lists update their timestamps, in edit order');
+  assert.deepEqual(unordered.map(entry => entry.id), ['newest', 'untouched', 'older'], 'Backup sorting does not mutate the original lists');
+  console.log('Passed: product persistence, offline photos, retry, pending edits, and list recency across synchronization.');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

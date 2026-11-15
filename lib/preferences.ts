@@ -24,6 +24,7 @@ export function applyTheme(preferences: ThemePreferences): void {
   const resolved = preferences.mode === 'system' ? (prefersDark ? 'dark' : 'light') : preferences.mode;
   document.documentElement.dataset.theme = resolved;
   document.documentElement.style.setProperty('--app-primary', preferences.primaryColor);
+  document.documentElement.style.setProperty('--app-market-color', preferences.primaryColor);
   document.documentElement.style.setProperty('--app-travel-color', preferences.travelColor);
 }
 
