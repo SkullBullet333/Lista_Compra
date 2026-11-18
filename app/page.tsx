@@ -25,7 +25,8 @@ import {
   recordItemPrice,
   getLatestPrice,
 } from '@/lib/storage';
-import { applyTheme, getThemePreferences } from '@/lib/preferences';
+import { setThemeUser } from '@/lib/preferences';
+import { useThemePreferences } from '@/hooks/use-theme-preferences';
 import {
   backupAppData,
   deleteListFromSupabase,
@@ -33,9 +34,11 @@ import {
   getCurrentSession,
   isOfflineSyncPending,
   isSupabaseConfigured,
+  loadCategoriesFromSupabase,
   loadItemConfigsFromSupabase,
   loadListsFromSupabase,
   loadTemplatesFromSupabase,
+  loadThemeFromSupabase,
   onAuthSessionChange,
   scheduleSupabaseBackup,
   signOut,
@@ -54,7 +57,37 @@ function useIsMounted() {
   );
 }
 
+interface InstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
+
 function ShoppingApp() {
+  useThemePreferences();
+  const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
+
+  useEffect(() => {
+    const captureInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as InstallPromptEvent);
+    };
+    const clearInstallPrompt = () => setInstallPrompt(null);
+    window.addEventListener('beforeinstallprompt', captureInstallPrompt);
+    window.addEventListener('appinstalled', clearInstallPrompt);
+  return () => {
+      window.removeEventListener('beforeinstallprompt', captureInstallPrompt);
+      window.removeEventListener('appinstalled', clearInstallPrompt);
+    };
+  }, []);
+
+  const installApp = async () => {
+    if (!installPrompt) return;
+    await installPrompt.prompt();
+    await installPrompt.userChoice;
+    setInstallPrompt(null);
+  };
+
+  
   const [restoredNavigation] = useState(() => getStoredNavigation());
   const [lists, setLists] = useState<ShoppingList[]>(() => getStoredLists());
   const [activeListId, setActiveListId] = useState<string>(() => restoredNavigation?.listId || getStoredActiveListId());
@@ -67,6 +100,7 @@ function ShoppingApp() {
   const [session, setSession] = useState<Session | null>(null);
   const [syncNotice, setSyncNotice] = useState('');
   const [syncFailure, setSyncFailure] = useState('');
+  const localEditVersion = React.useRef(0);
 
   // Modals state
   const [isItemModalOpen, setIsItemModalOpen] = useState(false);
@@ -83,10 +117,14 @@ function ShoppingApp() {
   } | null>(null);
 
   useEffect(() => {
-    applyTheme(getThemePreferences());
     if (!isSupabaseConfigured()) return;
-    getCurrentSession().then(current => { setSession(current); setAuthReady(true); }).catch(() => setAuthReady(true));
-    return onAuthSessionChange(current => { setSession(current); setAuthReady(true); });
+    const acceptSession = (current: Session | null) => {
+      setThemeUser(current?.user.id || null);
+      setSession(current);
+      setAuthReady(true);
+    };
+    getCurrentSession().then(acceptSession).catch(() => setAuthReady(true));
+    return onAuthSessionChange(acceptSession);
   }, []);
 
   useEffect(() => {
@@ -108,18 +146,39 @@ function ShoppingApp() {
     if (!session) return;
     let active = true;
     let unsubscribeRealtime = () => {};
+    let refreshing = false;
+    let refreshRequested = false;
     const applyRemote = async () => {
-      if (!navigator.onLine) return;
-      await loadItemConfigsFromSupabase();
-      if (isOfflineSyncPending()) return;
-      await loadTemplatesFromSupabase();
-      const remote = await loadListsFromSupabase();
-      if (!active || !remote.length) return;
-      setLists(remote);
-      saveLists(remote);
-      if (!remote.some(list => list.id === getStoredActiveListId())) {
-        setActiveListId(remote[0].id);
-        saveActiveListId(remote[0].id);
+      if (!active || !navigator.onLine) return;
+      refreshRequested = true;
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        while (active && refreshRequested && navigator.onLine) {
+          refreshRequested = false;
+          await flushPendingSupabaseBackup();
+          if (isOfflineSyncPending()) return;
+          const version = localEditVersion.current;
+          // List updates must not wait for catalog or template downloads.
+          const [remote] = await Promise.all([loadListsFromSupabase(), loadCategoriesFromSupabase()]);
+          if (!active) return;
+          if (version !== localEditVersion.current || isOfflineSyncPending()) {
+            refreshRequested = true;
+            continue;
+          }
+          setLists(remote);
+          saveLists(remote);
+          if (remote.length && !remote.some(list => list.id === getStoredActiveListId())) {
+            setActiveListId(remote[0].id);
+            saveActiveListId(remote[0].id);
+          }
+          await Promise.all([loadItemConfigsFromSupabase(), loadTemplatesFromSupabase()]);
+          if (active) setSyncFailure('');
+        }
+      } catch (error) {
+        if (active) setSyncFailure(error instanceof Error ? error.message : 'Não foi possível atualizar os dados.');
+      } finally {
+        refreshing = false;
       }
     };
     const initialize = async () => {
@@ -128,11 +187,14 @@ function ShoppingApp() {
           setSyncNotice('Modo offline: alterações salvas neste aparelho.');
           return;
         }
+        await loadThemeFromSupabase(session.user.id);
         await flushPendingSupabaseBackup();
+        const version = localEditVersion.current;
+        await loadCategoriesFromSupabase();
         await loadItemConfigsFromSupabase();
         await loadTemplatesFromSupabase();
         const remote = await loadListsFromSupabase();
-        if (!active) return;
+        if (!active || version !== localEditVersion.current || isOfflineSyncPending()) return;
         if (remote.length) {
           setLists(remote);
           saveLists(remote);
@@ -175,8 +237,6 @@ function ShoppingApp() {
       setSyncNotice('Conexão recuperada. Sincronizando alterações...');
       try {
         await flushPendingSupabaseBackup();
-        await loadItemConfigsFromSupabase();
-        await loadTemplatesFromSupabase();
         await applyRemote();
         if (active) {
           setSyncNotice('');
@@ -244,6 +304,7 @@ function ShoppingApp() {
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.repeat || document.querySelector('dialog[open]')) return;
       if (e.key === 'Escape') {
         if (isNewListModalOpen) {
           setIsNewListModalOpen(false);
@@ -302,6 +363,7 @@ function ShoppingApp() {
 
   // Save to localStorage when lists update
   const handleUpdateLists = (newLists: ShoppingList[]) => {
+    localEditVersion.current += 1;
     setLists(newLists);
     saveLists(newLists);
     scheduleSupabaseBackup(newLists);
@@ -782,7 +844,7 @@ function ShoppingApp() {
           />
         )}
 
-        {activeTab === 'settings' && <SettingsView userEmail={session?.user.email} onSignOut={() => { void signOut(); }} section={settingsSection} onSectionChange={section => {
+        {activeTab === 'settings' && <SettingsView onInstallApp={installPrompt ? installApp : undefined} userEmail={session?.user.email} onSignOut={() => { void signOut(); }} section={settingsSection} onSectionChange={section => {
           setSettingsSection(section);
           if (section !== 'home' && typeof window !== 'undefined') {
             window.history.pushState({ screen: 'settings', settingsSection: section }, '');

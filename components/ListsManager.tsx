@@ -1,5 +1,7 @@
 'use client';
 
+import { usePageScrollLock } from '@/hooks/use-page-scroll-lock';
+
 import React, { useEffect, useRef, useState } from 'react';
 import { useOutsideDismiss } from '@/hooks/use-outside-dismiss';
 import {
@@ -53,6 +55,7 @@ export function ListsManager({
 }: ListsManagerProps) {
   const [listToDelete, setListToDelete] = useState<ShoppingList | null>(null);
   const [openListMenuId, setOpenListMenuId] = useState<string | null>(null);
+  usePageScrollLock(isNewModalOpen || lists.some(list => list.id === openListMenuId && (list.type || 'market') === listFilter), () => { if (isNewModalOpen) onCloseNewModal(); else setOpenListMenuId(null); });
   const listMenuRef = useRef<HTMLDivElement>(null);
   useOutsideDismiss(listMenuRef, openListMenuId !== null, () => setOpenListMenuId(null));
   const [newTitle, setNewTitle] = useState('');
@@ -217,7 +220,7 @@ export function ListsManager({
           onClick={closeNewModal}
         >
           <div
-            className="bg-white rounded-2xl max-w-md w-full overflow-hidden shadow-xl border border-slate-200"
+            className="bg-white rounded-2xl max-w-md w-full overflow-hidden md:max-h-[90dvh] md:overflow-y-auto md:overscroll-contain shadow-xl border border-slate-200"
             onClick={e => e.stopPropagation()}
           >
             <div className="p-4 border-b border-slate-100 flex items-center justify-between">

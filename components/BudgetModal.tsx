@@ -1,5 +1,7 @@
 'use client';
 
+import { usePageScrollLock } from '@/hooks/use-page-scroll-lock';
+
 import React, { useState } from 'react';
 import { X, Target, Store, Check } from 'lucide-react';
 import { ShoppingList } from '@/types/grocery';
@@ -39,7 +41,7 @@ function BudgetModalForm({
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-2xl max-w-md w-full overflow-hidden shadow-xl border border-slate-200"
+        className="bg-white rounded-2xl max-w-md w-full overflow-hidden md:max-h-[90dvh] md:overflow-y-auto md:overscroll-contain shadow-xl border border-slate-200"
         onClick={e => e.stopPropagation()}
       >
         <div className="p-4 border-b border-slate-100 flex items-center justify-between">
@@ -143,6 +145,7 @@ export function BudgetModal({
   list,
   onSave,
 }: BudgetModalProps) {
+  usePageScrollLock(isOpen, onClose);
   if (!isOpen) return null;
 
   return (

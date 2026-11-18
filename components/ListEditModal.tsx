@@ -1,5 +1,7 @@
 'use client';
 
+import { usePageScrollLock } from '@/hooks/use-page-scroll-lock';
+
 import React, { useEffect, useState } from 'react';
 import {
   X,
@@ -277,6 +279,7 @@ export function ListEditModal({
   onClearChecked,
   onRequestDelete,
 }: ListEditModalProps) {
+  usePageScrollLock(isOpen, onClose);
   if (!isOpen) return null;
 
   return (

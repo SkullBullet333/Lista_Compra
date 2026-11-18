@@ -1,9 +1,11 @@
 'use client';
 
+import { usePageScrollLock } from '@/hooks/use-page-scroll-lock';
+
 import React from 'react';
 import { X, ExternalLink } from 'lucide-react';
 import { CategoryId } from '@/types/grocery';
-import { getAllCategories } from '@/lib/categories';
+import { useCategories } from '@/hooks/use-categories';
 
 interface ImagePreviewModalProps {
   isOpen: boolean;
@@ -20,9 +22,10 @@ export function ImagePreviewModal({
   itemName,
   category,
 }: ImagePreviewModalProps) {
+  const categories = useCategories();
+  usePageScrollLock(isOpen && !!imageUrl, onClose);
   if (!isOpen || !imageUrl) return null;
 
-  const categories = getAllCategories();
   const categoryMeta = categories[category] || categories.outros;
   const isLocalPhoto = imageUrl.startsWith('data:');
 
@@ -32,7 +35,7 @@ export function ImagePreviewModal({
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-2xl max-w-md w-full overflow-hidden shadow-2xl border border-slate-200"
+        className="bg-white rounded-2xl max-w-md w-full overflow-hidden md:max-h-[90dvh] md:overflow-y-auto md:overscroll-contain shadow-2xl border border-slate-200"
         onClick={e => e.stopPropagation()}
       >
         <div className="p-4 border-b border-slate-100 flex items-center justify-between">

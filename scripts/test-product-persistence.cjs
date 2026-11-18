@@ -12,6 +12,14 @@ function runtime(shared, state = { local: new Map(), catalog: [], writes: [], up
     removeItem: key => state.local.delete(key),
   };
   const client = {
+    channel() {
+      const channel = {
+        on(_event, filter, callback) { (state.listeners ||= new Map()).set(filter.table, callback); return channel; },
+        subscribe(callback) { state.channelStatus = callback; return channel; },
+      };
+      return channel;
+    },
+    removeChannel() { state.removed = true; },
     auth: { getUser: async () => ({ data: { user: { id: 'tester' } }, error: null }) },
     storage: { from: () => ({
       upload: async () => { state.uploads++; return { error: state.storageError || null }; },
@@ -52,7 +60,25 @@ function runtime(shared, state = { local: new Map(), catalog: [], writes: [], up
               const rows = state.remoteLists.filter(row => filters.every(filter => filter(row)));
               return { data: single ? rows[0] || null : rows, error: null };
             }
-            if (operation !== 'select') state.writes.push({ table, operation, payload });
+            if (table === 'categories') {
+              state.categories ||= [];
+              if (operation === 'select') {
+                state.beforeCategoryRead?.();
+                return { data: state.categories.filter(row => filters.every(filter => filter(row))), error: state.categoryError || null };
+              }
+              if (operation === 'upsert') for (const row of payload) {
+                const existing = state.categories.find(category => category.id === row.id);
+                if (existing) Object.assign(existing, row);
+                else state.categories.push({ ...row });
+              }
+              if (operation === 'delete') {
+                state.categories.splice(0, state.categories.length, ...state.categories.filter(row => !filters.every(filter => filter(row))));
+              }
+            }
+            if (operation !== 'select') {
+              state.writes.push({ table, operation, payload });
+              state.onWrite?.({ table, operation, payload });
+            }
             return { data: single ? null : [], error: null };
           }).then(resolve, reject);
         },
@@ -63,15 +89,22 @@ function runtime(shared, state = { local: new Map(), catalog: [], writes: [], up
   const mocks = {
     '@supabase/supabase-js': { createClient: () => client },
     '@/lib/catalog-mode': { SHARED_CATALOG_EDIT: shared },
-    '@/lib/categories': { getCustomCategories: () => [] },
-    '@/lib/preferences': { getThemePreferences: () => ({ mode: 'light', primaryColor: '#059669' }) },
+    '@/lib/preferences': { getThemePreferences: () => ({ mode: 'light', primaryColor: '#059669' }), hasSavedTheme: () => true },
     '@/lib/templates': { getStoredTemplateOverrides: () => [], getDeletedTemplateIds: () => [] },
   };
   const modules = new Map();
+  const window = new EventTarget();
+  const document = new EventTarget();
+  document.visibilityState = 'visible';
+  const timeouts = new Map(), intervals = new Map();
+  let timerId = 0;
   const context = vm.createContext({
-    console, localStorage, window: { dispatchEvent() {} }, navigator: { onLine: true },
+    console, localStorage, window, document, navigator: { onLine: true },
     Event, CustomEvent, crypto: webcrypto, TextEncoder, Uint8Array, fetch, btoa,
-    setTimeout, clearTimeout,
+    setTimeout: (fn, delay) => { const id = ++timerId; timeouts.set(id, { fn, delay }); return id; },
+    clearTimeout: id => timeouts.delete(id),
+    setInterval: (fn, delay) => { const id = ++timerId; intervals.set(id, { fn, delay }); return id; },
+    clearInterval: id => intervals.delete(id),
     process: { env: { NEXT_PUBLIC_SUPABASE_URL: 'https://db.test', NEXT_PUBLIC_SUPABASE_ANON_KEY: 'test' } },
   });
   function load(name) {
@@ -83,7 +116,7 @@ function runtime(shared, state = { local: new Map(), catalog: [], writes: [], up
     vm.runInContext(`(function(require,module,exports){${code}\n})`, context, { filename: file })(load, module, module.exports);
     return module.exports;
   }
-  return { storage: load('@/lib/storage'), sync: load('@/lib/supabase'), state };
+  return { storage: load('@/lib/storage'), categories: load('@/lib/categories'), sync: load('@/lib/supabase'), state, window, document, timeouts, intervals, localStorage };
 }
 
 async function main() {
@@ -151,4 +184,5 @@ async function main() {
   assert.deepEqual(unordered.map(entry => entry.id), ['newest', 'untouched', 'older'], 'Backup sorting does not mutate the original lists');
   console.log('Passed: product persistence, offline photos, retry, pending edits, and list recency across synchronization.');
 }
-main().catch(error => { console.error(error); process.exitCode = 1; });
+module.exports = { runtime };
+if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1; });

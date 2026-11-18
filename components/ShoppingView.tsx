@@ -1,5 +1,7 @@
 'use client';
 
+import { usePageScrollLock } from '@/hooks/use-page-scroll-lock';
+
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Plus,
@@ -11,7 +13,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { ShoppingList, GroceryItem, CategoryId } from '@/types/grocery';
-import { getAllCategories } from '@/lib/categories';
+import { useCategories } from '@/hooks/use-categories';
 import { calculateListTotals, formatCurrency } from '@/lib/storage';
 import { ItemRow } from './ItemRow';
 import { ProductPicker } from './ProductPicker';
@@ -49,12 +51,13 @@ export function ShoppingView({
 }: ShoppingViewProps) {
   const [selectedCategory, setSelectedCategory] = useState<CategoryId | 'all'>('all');
   const [showCategoryListModal, setShowCategoryListModal] = useState(false);
+  usePageScrollLock(showCategoryListModal && !isProductPickerOpen, () => setShowCategoryListModal(false));
   const categoryFilterRef = useRef<HTMLDivElement>(null);
   useOutsideDismiss(categoryFilterRef, showCategoryListModal, () => setShowCategoryListModal(false));
   const [viewMode, setViewMode] = useState<'categories' | 'status'>('categories');
   const [deletedItem, setDeletedItem] = useState<{ item: GroceryItem; index: number } | null>(null);
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const categories = useMemo(() => getAllCategories(), []);
+  const categories = useCategories();
   const availableCategories = useMemo(
     () => (Object.keys(categories) as CategoryId[]).filter(categoryId => list.items.some(item => item.category === categoryId)),
     [categories, list.items]
@@ -204,7 +207,7 @@ export function ShoppingView({
 
       <div className="max-w-4xl mx-auto px-3 sm:px-6 pt-3 sm:pt-4">
         {/* Barra de Filtros e Categorias no Modo de Lista */}
-        <div ref={categoryFilterRef} className="space-y-2 mb-4">
+        <div className="space-y-2 mb-4">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             {/* Alternador de Modo de Exibição */}
             <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200 shrink-0">
@@ -252,7 +255,15 @@ export function ShoppingView({
             </div>
 
             {/* Botão para abrir o Filtro de Categorias em Lista */}
+            <div ref={categoryFilterRef} className="relative shrink-0" onKeyDown={event => {
+              if (event.key !== 'Escape' || !showCategoryListModal) return;
+              event.preventDefault();
+              event.stopPropagation();
+              setShowCategoryListModal(false);
+              categoryFilterRef.current?.querySelector('button')?.focus();
+            }}>
             <button
+              type="button"
               onClick={() => setShowCategoryListModal(!showCategoryListModal)}
               className={`px-2 sm:px-2.5 py-2 rounded-xl border text-xs font-bold transition-all flex items-center gap-1 shrink-0 ${
                 selectedCategory !== 'all'
@@ -261,16 +272,16 @@ export function ShoppingView({
               }`}
               title="Categorias"
               aria-label="Categorias"
+              aria-expanded={showCategoryListModal}
             >
               <ListFilter size={14} />
-              <span className="hidden sm:inline">Categorias</span>
-              <ChevronDown size={13} className="hidden sm:block" />
+              <span className="hidden max-w-36 truncate sm:inline">{selectedCategory === 'all' ? 'Categorias' : categories[selectedCategory]?.label}</span>
+              <ChevronDown size={13} className={`shrink-0 transition-transform ${showCategoryListModal ? 'rotate-180' : ''}`} />
             </button>
-          </div>
 
-          {/* Categoria em Modo de Lista (Menu suspenso / gaveta vertical limpa de categorias) */}
+          {/* Dropdown anchored to the category filter without shifting the list. */}
           {showCategoryListModal && (
-            <div className="bg-white border border-slate-200 rounded-2xl p-2.5 shadow-md animate-fade-in space-y-1">
+            <div className="absolute right-0 top-full z-20 mt-1.5 w-72 max-w-[calc(100vw-1.5rem)] max-h-[min(60dvh,20rem)] overflow-y-auto overscroll-contain [scrollbar-gutter:stable] bg-white border border-slate-200 rounded-xl p-2 pr-3 shadow-xl animate-fade-in space-y-1">
               <div className="flex items-center justify-between px-2 py-1 text-xs font-extrabold text-black border-b border-slate-100 mb-1">
                 <span>Selecionar Categoria</span>
                 <button
@@ -331,6 +342,8 @@ export function ShoppingView({
               })}
             </div>
           )}
+            </div>
+          </div>
         </div>
 
         {/* Conteúdo da Lista de Itens */}

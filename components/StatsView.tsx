@@ -3,7 +3,7 @@
 import React from 'react';
 import { PieChart, TrendingUp, CheckCircle2, Clock, Wallet, ShoppingBag } from 'lucide-react';
 import { ShoppingList, CategoryId } from '@/types/grocery';
-import { getAllCategories } from '@/lib/categories';
+import { useCategories } from '@/hooks/use-categories';
 import { calculateListTotals, formatCurrency } from '@/lib/storage';
 
 interface StatsViewProps {
@@ -14,7 +14,7 @@ interface StatsViewProps {
 
 export function StatsView({ list, onSwitchToShopping, embedded = false }: StatsViewProps) {
   const totals = calculateListTotals(list.items);
-  const categories = getAllCategories();
+  const categories = useCategories();
 
   // Group spending by category
   const categoryBreakdown = (Object.keys(categories) as CategoryId[]).map(catKey => {

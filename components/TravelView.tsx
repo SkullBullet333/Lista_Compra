@@ -1,5 +1,7 @@
 'use client';
 
+import { usePageScrollLock } from '@/hooks/use-page-scroll-lock';
+
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarDays, Check, Clock3, MapPin, Pencil, Plus, Trash2, Wallet, X } from 'lucide-react';
 import { ShoppingList, TravelEntry, TravelEntryType } from '@/types/grocery';
@@ -90,6 +92,7 @@ function TravelEntryRow({
 export function TravelView({ list, onUpdateList }: TravelViewProps) {
   const entries = useMemo(() => list.travelEntries || [], [list.travelEntries]);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
+  usePageScrollLock(isEditorOpen, () => setIsEditorOpen(false));
   const [editingId, setEditingId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [date, setDate] = useState(localToday);

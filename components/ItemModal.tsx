@@ -1,5 +1,7 @@
 'use client';
 
+import { usePageScrollLock } from '@/hooks/use-page-scroll-lock';
+
 import React, { useRef, useState } from 'react';
 import {
   X,
@@ -10,19 +12,12 @@ import {
   Minus,
   AlertCircle,
   BookmarkCheck,
-  Apple,
-  Croissant,
-  Package,
-  Beef,
-  Milk,
-  Sparkles as CleanIcon,
-  Coffee,
-  ShoppingBag,
   Camera,
   Upload,
 } from 'lucide-react';
 import { GroceryItem, CategoryId, SavedItemConfig, UnitType } from '@/types/grocery';
-import { getAllCategories } from '@/lib/categories';
+import { useCategories } from '@/hooks/use-categories';
+import { CategoryIcon, CategorySelect } from '@/components/CategorySelect';
 import { formatCurrency, findConfiguredItem, getEditableItemConfigs } from '@/lib/storage';
 import { prepareProductPhoto } from '@/lib/product-photo';
 import { getSupabaseClient, uploadProductImage } from '@/lib/supabase';
@@ -33,27 +28,6 @@ interface ItemModalProps {
   onSave: (item: Omit<GroceryItem, 'id' | 'createdAt'> & { id?: string }) => void | Promise<void>;
   initialItem?: GroceryItem | null;
   defaultCategory?: CategoryId;
-}
-
-function getCategoryIcon(cat: CategoryId, size = 16) {
-  switch (cat) {
-    case 'feira':
-      return <Apple size={size} className="text-emerald-700" />;
-    case 'padaria':
-      return <Croissant size={size} className="text-amber-700" />;
-    case 'mercearia':
-      return <Package size={size} className="text-orange-700" />;
-    case 'carnes':
-      return <Beef size={size} className="text-rose-700" />;
-    case 'laticinios':
-      return <Milk size={size} className="text-sky-700" />;
-    case 'limpeza':
-      return <CleanIcon size={size} className="text-purple-700" />;
-    case 'bebidas':
-      return <Coffee size={size} className="text-teal-700" />;
-    default:
-      return <ShoppingBag size={size} className="text-slate-600" />;
-  }
 }
 
 async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
@@ -90,7 +64,7 @@ function ItemModalForm({
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const [isExpanded, setIsExpanded] = useState(false);
-  const categories = React.useMemo(() => getAllCategories(), []);
+  const categories = useCategories();
   const touchStartY = useRef<number | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
 
@@ -191,9 +165,12 @@ function ItemModalForm({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col justify-end bg-slate-900/50 backdrop-blur-xs sm:items-center sm:justify-center sm:p-4 overflow-hidden animate-fade-in" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex flex-col justify-end bg-slate-900/50 backdrop-blur-xs sm:items-center sm:justify-center sm:p-2.5 overflow-hidden animate-fade-in" onClick={onClose}>
       <div
-        className={`w-full sm:max-w-xl rounded-t-2xl sm:rounded-2xl shadow-2xl border border-slate-200 bg-[#f8fafc] flex flex-col overflow-hidden transition-[height] duration-300 ease-out ${isExpanded ? 'h-[92dvh] sm:h-[88vh]' : 'h-[42dvh] sm:h-[62vh]'}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={initialItem ? 'Editar item' : 'Adicionar item'}
+        className={`w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl shadow-2xl border border-slate-200 bg-[#f8fafc] flex flex-col overflow-hidden transition-[height] duration-300 ease-out sm:h-auto sm:max-h-[90dvh] ${isExpanded ? 'h-[92dvh]' : 'h-[42dvh]'}`}
         onClick={e => e.stopPropagation()}
         onTouchStart={e => { touchStartY.current = e.touches[0].clientY; }}
         onTouchEnd={e => {
@@ -207,16 +184,20 @@ function ItemModalForm({
         <button
           type="button"
           onClick={() => setIsExpanded(value => !value)}
-          className="h-7 bg-white flex items-center justify-center text-slate-500 hover:text-emerald-700 shrink-0"
+          className="h-7 bg-white flex sm:hidden items-center justify-center text-slate-500 hover:text-emerald-700 shrink-0"
           aria-label={isExpanded ? 'Recolher ajustes' : 'Expandir ajustes'}
           title={isExpanded ? 'Recolher ajustes' : 'Expandir ajustes'}
         >
           <span className="w-10 h-1.5 rounded-full bg-slate-300" />
         </button>
+        <div className="hidden sm:flex items-center justify-between border-b border-slate-200 bg-white px-3 py-2">
+          <h2 className="text-sm font-bold text-slate-900">{initialItem ? 'Editar item' : 'Adicionar item'}</h2>
+          <button type="button" onClick={onClose} aria-label="Fechar" className="rounded-lg p-1 text-slate-500 hover:bg-slate-100"><X size={18} /></button>
+        </div>
         {/* Form Body - Scrollable */}
-        <form ref={formRef} onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-3.5 sm:p-5 space-y-3.5">
+        <form ref={formRef} onSubmit={handleSubmit} className="flex-1 sm:min-h-0 overflow-y-auto p-3.5 sm:p-3 space-y-3.5 sm:space-y-2">
           {/* Card: Nome do Item */}
-          <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200/90 shadow-2xs space-y-2">
+          <div className="bg-white p-3.5 sm:p-2.5 rounded-2xl border border-slate-200/90 shadow-2xs space-y-2">
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
                 Nome do Item <span className="text-rose-500">*</span>
@@ -237,7 +218,7 @@ function ItemModalForm({
                 value={name}
                 onChange={e => handleNameChange(e.target.value)}
                 placeholder="Ex: Arroz Tio João, Banana, Sabão..."
-                className="w-full px-3.5 py-2.5 sm:py-3 rounded-xl border border-slate-300 text-slate-900 text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all font-semibold placeholder:font-normal placeholder:text-slate-400"
+                className="w-full px-3.5 py-2.5 sm:py-2 rounded-xl border border-slate-300 text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all font-semibold placeholder:font-normal placeholder:text-slate-400"
               />
               {name && (
                 <button
@@ -285,7 +266,7 @@ function ItemModalForm({
           </div>
 
           {/* Card: Quantidade & Unidade */}
-          <div className="bg-white p-2.5 sm:p-4 rounded-2xl border border-slate-200/90 shadow-2xs">
+          <div className="bg-white p-2.5 rounded-2xl border border-slate-200/90 shadow-2xs">
             <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 items-end">
               <div className="min-w-0">
                 <label className="block text-[11px] sm:text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
@@ -301,7 +282,7 @@ function ItemModalForm({
                       const val = parseFloat(e.target.value);
                       setQuantity(isNaN(val) ? 0 : val);
                     }}
-                    className="w-full h-9 sm:h-11 rounded-xl border border-slate-300 text-center text-slate-900 font-extrabold text-base sm:text-lg focus:outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20"
+                    className="w-full h-9 rounded-xl border border-slate-300 text-center text-slate-900 font-extrabold text-base focus:outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20"
                   />
               </div>
 
@@ -315,7 +296,7 @@ function ItemModalForm({
                   onChange={e => setUnit(e.target.value)}
                   maxLength={20}
                   placeholder="Ex: un, kg"
-                  className="w-full px-2.5 h-9 sm:h-11 rounded-xl border border-slate-300 text-slate-900 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 bg-white"
+                  className="w-full px-2.5 h-9 rounded-xl border border-slate-300 text-slate-900 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 bg-white"
                 />
               </div>
 
@@ -323,25 +304,25 @@ function ItemModalForm({
                 <button
                   type="button"
                   onClick={() => setQuantity(prev => Math.max(1, Math.ceil(prev) - 1))}
-                  className="w-8 h-9 sm:w-9 sm:h-11 rounded-xl border border-slate-300 bg-slate-50 text-slate-700 flex items-center justify-center hover:bg-slate-100"
+                  className="w-8 h-9 sm:w-9 sm:h-9 rounded-xl border border-slate-300 bg-slate-50 text-slate-700 flex items-center justify-center hover:bg-slate-100"
                   title="Diminuir quantidade"
                   aria-label="Diminuir quantidade"
                 ><Minus size={16} strokeWidth={2.5} /></button>
                 <button
                   type="button"
                   onClick={() => setQuantity(prev => Math.floor(prev) + 1)}
-                  className="w-8 h-9 sm:w-9 sm:h-11 rounded-xl border border-slate-300 bg-slate-50 text-slate-700 flex items-center justify-center hover:bg-slate-100"
+                  className="w-8 h-9 sm:w-9 sm:h-9 rounded-xl border border-slate-300 bg-slate-50 text-slate-700 flex items-center justify-center hover:bg-slate-100"
                   title="Aumentar quantidade"
                   aria-label="Aumentar quantidade"
                 ><Plus size={16} strokeWidth={2.5} /></button>
               </div>
             </div>
           </div>
-          {isExpanded && <div className="space-y-3.5">
+          <div className={`${isExpanded ? 'block' : 'hidden'} sm:block space-y-3.5 sm:space-y-2`}>
 
           {/* Card: Preço Unitário & Subtotal Calculado */}
-          <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200/90 shadow-2xs">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 items-end">
+          <div className="bg-white p-3.5 sm:p-2.5 rounded-2xl border border-slate-200/90 shadow-2xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 sm:gap-2 items-end">
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
                   Valor / Preço Unitário (R$)
@@ -359,7 +340,7 @@ function ItemModalForm({
                       setPrice(cleaned);
                     }}
                     placeholder="0,00"
-                    className="w-full pl-9 pr-3.5 py-2.5 sm:py-3 rounded-xl border border-slate-300 text-slate-900 text-sm sm:text-base font-bold tabular-nums focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600"
+                    className="w-full pl-9 pr-3.5 py-2.5 sm:py-2 rounded-xl border border-slate-300 text-slate-900 text-sm font-bold tabular-nums focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600"
                   />
                 </div>
               </div>
@@ -369,7 +350,7 @@ function ItemModalForm({
                 <span className="text-[11px] font-semibold text-emerald-900">
                   Total estimado ({quantity} {unit} × {formatCurrency(parsedPrice)}):
                 </span>
-                <span className="text-base sm:text-lg font-extrabold text-emerald-800 tabular-nums">
+                <span className="text-base font-extrabold text-emerald-800 tabular-nums">
                   {formatCurrency(totalPrice)}
                 </span>
               </div>
@@ -377,17 +358,18 @@ function ItemModalForm({
           </div>
 
           {/* Card: Categoria */}
-          <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200/90 shadow-2xs space-y-2">
+          <div className="bg-white p-3.5 sm:p-2.5 rounded-2xl border border-slate-200/90 shadow-2xs space-y-2">
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
                 Categoria do Produto
               </label>
-              <span className="text-[11px] text-slate-400 font-medium">
+              <span className="text-[11px] text-slate-400 font-medium sm:hidden">
                 {categories[category]?.label}
               </span>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div className="hidden sm:block"><CategorySelect value={category} onChange={setCategory} /></div>
+            <div className="grid grid-cols-2 sm:hidden gap-2">
               {(Object.keys(categories) as CategoryId[]).map(catKey => {
                 const cat = categories[catKey];
                 const isSelected = category === catKey;
@@ -407,7 +389,7 @@ function ItemModalForm({
                         className="w-6 h-6 rounded-md flex items-center justify-center shrink-0"
                         style={{ backgroundColor: cat.bgColor }}
                       >
-                        {getCategoryIcon(catKey, 14)}
+                        <CategoryIcon category={catKey} size={14} />
                       </div>
                       <span className="truncate text-xs">{cat.label}</span>
                     </div>
@@ -424,7 +406,7 @@ function ItemModalForm({
           </div>
 
           {/* Card: Imagem do Produto (Opcional) */}
-          <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200/90 shadow-2xs space-y-2.5">
+          <div className="bg-white p-3.5 sm:p-2.5 rounded-2xl border border-slate-200/90 shadow-2xs space-y-2.5">
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
                 <ImageIcon size={14} className="text-emerald-700" />
@@ -462,14 +444,14 @@ function ItemModalForm({
               <button
                 type="button"
                 onClick={() => cameraInputRef.current?.click()}
-                className="flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-xs sm:text-sm font-bold text-emerald-900 hover:bg-emerald-100"
+                className="flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 sm:py-2 text-xs sm:text-sm font-bold text-emerald-900 hover:bg-emerald-100"
               >
                 <Camera size={17} /> Tirar foto
               </button>
               <button
                 type="button"
                 onClick={() => galleryInputRef.current?.click()}
-                className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs sm:text-sm font-bold text-slate-700 hover:bg-slate-50"
+                className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-3 sm:py-2 text-xs sm:text-sm font-bold text-slate-700 hover:bg-slate-50"
               >
                 <Upload size={17} /> Escolher da galeria
               </button>
@@ -510,7 +492,7 @@ function ItemModalForm({
           </div>
 
           {/* Card: Observações / Marca */}
-          <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200/90 shadow-2xs space-y-1.5">
+          <div className="bg-white p-3.5 sm:p-2.5 rounded-2xl border border-slate-200/90 shadow-2xs space-y-1.5">
             <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
               Observações / Marca Preferida (Opcional)
             </label>
@@ -522,16 +504,16 @@ function ItemModalForm({
               className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-slate-900 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600"
             />
           </div>
-          </div>}
+          </div>
 
         </form>
 
         {/* Sticky Bottom Actions Bar (Rodapé Fixo) */}
-        <div className="p-3 sm:p-4 bg-white border-t border-slate-200 shadow-lg flex items-center gap-2.5 shrink-0">
+        <div className="p-3 sm:p-2.5 bg-white border-t border-slate-200 shadow-lg flex items-center gap-2.5 shrink-0">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-3 rounded-xl border border-slate-200 font-bold text-xs sm:text-sm text-slate-700 hover:bg-slate-50 active:bg-slate-100 transition-colors"
+            className="px-4 py-3 sm:py-2 rounded-xl border border-slate-200 font-bold text-xs sm:text-sm text-slate-700 hover:bg-slate-50 active:bg-slate-100 transition-colors"
           >
             Cancelar
           </button>
@@ -539,7 +521,7 @@ function ItemModalForm({
             type="button"
             onClick={handleSubmit}
             disabled={isProcessingPhoto || isUploadingPhoto}
-            className="flex-1 py-3 px-5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-wait active:scale-98 text-white font-extrabold text-sm sm:text-base shadow-md shadow-emerald-700/20 flex items-center justify-center gap-2 transition-all cursor-pointer"
+            className="flex-1 py-3 sm:py-2 px-5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-wait active:scale-98 text-white font-extrabold text-sm shadow-md shadow-emerald-700/20 flex items-center justify-center gap-2 transition-all cursor-pointer"
           >
             <Check size={18} strokeWidth={2.5} />
             <span>{isUploadingPhoto ? 'Enviando foto...' : initialItem ? 'Salvar Alterações' : 'Adicionar à Lista'}</span>
@@ -557,6 +539,7 @@ export function ItemModal({
   initialItem,
   defaultCategory,
 }: ItemModalProps) {
+  usePageScrollLock(isOpen, onClose);
   if (!isOpen) return null;
 
   return (

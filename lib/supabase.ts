@@ -1,13 +1,23 @@
 import { createClient, Session, SupabaseClient, User } from '@supabase/supabase-js';
 import { SHARED_CATALOG_EDIT } from '@/lib/catalog-mode';
-import { getCustomCategories } from '@/lib/categories';
-import { getThemePreferences } from '@/lib/preferences';
+import { acknowledgeDeletedCategory, getCustomCategories, getDeletedCategoryIds, replaceCustomCategories } from '@/lib/categories';
+import { getThemePreferences, hasSavedTheme, saveThemePreferences, themeRestoreGuard } from '@/lib/preferences';
 import { getSavedItemConfigs, getPendingCatalogItems, acknowledgeCatalogItem, getPriceHistory, getStoredActiveListId, getStoredLists, markItemConfigSynced, replaceSavedItemConfigs, replaceSharedCatalogItems, saveActiveListId, saveLists } from '@/lib/storage';
 import { getDeletedTemplateIds, getStoredTemplateOverrides, replaceTemplatesFromSupabase } from '@/lib/templates';
 import { ListCollaborator, ListTemplate, SavedItemConfig, ShoppingList } from '@/types/grocery';
 
 let client: SupabaseClient | null | undefined;
+
+export async function loadThemeFromSupabase(userId: string): Promise<void> {
+  const supabase = getSupabaseClient();
+  if (!supabase || hasSavedTheme()) return;
+  const canRestore = themeRestoreGuard();
+  const { data, error } = await supabase.from('user_preferences').select('theme_mode, primary_color').eq('user_id', userId).maybeSingle();
+  if (error || !data || !canRestore()) return;
+  saveThemePreferences({ ...getThemePreferences(), mode: data.theme_mode, primaryColor: data.primary_color });
+}
 let backupTimer: ReturnType<typeof setTimeout> | undefined;
+let backupInFlight: Promise<boolean> | undefined;
 let catalogWrite: Promise<unknown> = Promise.resolve();
 
 function serializeCatalogWrite<T>(operation: () => Promise<T>): Promise<T> {
@@ -300,6 +310,28 @@ export async function loadTemplatesFromSupabase(): Promise<void> {
   replaceTemplatesFromSupabase(overrides, deletedIds);
 }
 
+export async function loadCategoriesFromSupabase(): Promise<void> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return;
+  const user = await requireUser(supabase);
+  const localSnapshot = JSON.stringify(getCustomCategories());
+  const { data, error } = await supabase.from('categories')
+    .select('id,name,color,icon').eq('user_id', user.id).eq('is_system', false).order('name');
+  ensureSyncSucceeded('Não foi possível carregar as categorias', error);
+  // A category edited while this request was running must be uploaded first.
+  if (isOfflineSyncPending() || JSON.stringify(getCustomCategories()) !== localSnapshot) return;
+  const prefix = `${user.id}:`;
+  replaceCustomCategories((data || []).flatMap(row => {
+    const id = String(row.id).startsWith(prefix) ? String(row.id).slice(prefix.length) : String(row.id);
+    if (!id.startsWith('custom-')) return [];
+    return [{
+      id, label: String(row.name), color: String(row.color), icon: typeof row.icon === 'string' ? row.icon : 'shopping-bag',
+      bgColor: '#f1f5f9', borderColor: '#e2e8f0',
+      badgeBg: 'bg-slate-50 text-slate-800 border-slate-200', badgeText: 'text-slate-800',
+    }];
+  }));
+}
+
 export async function loadItemConfigsFromSupabase(): Promise<void> {
   const supabase = getSupabaseClient();
   if (!supabase) return;
@@ -535,8 +567,13 @@ export async function backupAppData(lists: ShoppingList[]): Promise<boolean> {
   const deletedTemplateIds = getDeletedTemplateIds();
   const prices = getPriceHistory();
   if (categories.length) {
-    const { error } = await supabase.from('categories').upsert(categories.map(category => ({ id: `${user.id}:${category.id}`, user_id: user.id, name: category.label, color: category.color, is_system: false })));
+    const { error } = await supabase.from('categories').upsert(categories.map(category => ({ id: `${user.id}:${category.id}`, user_id: user.id, name: category.label, color: category.color, icon: category.icon || 'shopping-bag', is_system: false })));
     ensureSyncSucceeded('Não foi possível salvar as categorias', error);
+  }
+  for (const id of getDeletedCategoryIds()) {
+    const { error } = await supabase.from('categories').delete().eq('id', `${user.id}:${id}`).eq('user_id', user.id);
+    ensureSyncSucceeded('Não foi possível excluir a categoria', error);
+    acknowledgeDeletedCategory(id);
   }
   for (const item of items) {
     const row = {
@@ -592,8 +629,11 @@ export async function backupAppData(lists: ShoppingList[]): Promise<boolean> {
     const { error } = await supabase.from('price_history').upsert(prices.map(entry => ({ id: `${user.id}:${entry.id}`, user_id: user.id, list_id: lists.some(list => list.id === entry.listId) ? entry.listId : null, item_name: entry.itemName, normalized_name: entry.normalizedName, unit_price: entry.price, market_name: entry.marketName || null, recorded_at: new Date(entry.recordedAt).toISOString() })));
     ensureSyncSucceeded('Não foi possível salvar o histórico de preços', error);
   }
-  const { error: preferenceError } = await supabase.from('user_preferences').upsert({ user_id: user.id, theme_mode: preferences.mode, primary_color: preferences.primaryColor });
-  ensureSyncSucceeded('Não foi possível salvar as preferências', preferenceError);
+  // A failed initial profile read must not upload defaults over a saved color.
+  if (hasSavedTheme()) {
+    const { error: preferenceError } = await supabase.from('user_preferences').upsert({ user_id: user.id, theme_mode: preferences.mode, primary_color: preferences.primaryColor });
+    ensureSyncSucceeded('Não foi possível salvar as preferências', preferenceError);
+  }
   return true;
 }
 
@@ -619,7 +659,23 @@ export function scheduleSupabaseBackup(lists: ShoppingList[]): void {
   }, 450);
 }
 
-export async function flushPendingSupabaseBackup(): Promise<boolean> {
+export function flushPendingSupabaseBackup(): Promise<boolean> {
+  if (backupInFlight) return backupInFlight;
+  backupInFlight = drainPendingSupabaseBackups().finally(() => { backupInFlight = undefined; });
+  return backupInFlight;
+}
+
+async function drainPendingSupabaseBackups(): Promise<boolean> {
+  let synced = false;
+  while (readOfflineSync()) {
+    if (!await flushSupabaseBackupRevision()) return synced;
+    synced = true;
+  }
+  if (synced) window.dispatchEvent(new Event('supabase-sync-success'));
+  return synced;
+}
+
+async function flushSupabaseBackupRevision(): Promise<boolean> {
   const pending = readOfflineSync();
   if (!pending) return false;
   if (typeof navigator !== 'undefined' && !navigator.onLine) return false;
@@ -632,7 +688,6 @@ export async function flushPendingSupabaseBackup(): Promise<boolean> {
   }
   const latest = readOfflineSync();
   if (latest?.revision === pending.revision) localStorage.removeItem(OFFLINE_SYNC_KEY);
-  window.dispatchEvent(new Event('supabase-sync-success'));
   return true;
 }
 
@@ -640,17 +695,35 @@ export function subscribeToListChanges(onChange: () => void): () => void {
   const supabase = getSupabaseClient();
   if (!supabase) return () => {};
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
-  const refresh = () => { if (refreshTimer) clearTimeout(refreshTimer); refreshTimer = setTimeout(onChange, 180); };
+  const refresh = () => {
+    if (!navigator.onLine || document.visibilityState === 'hidden' || refreshTimer) return;
+    // Bound the delay even when a bulk update keeps producing events.
+    refreshTimer = setTimeout(() => { refreshTimer = undefined; onChange(); }, 100);
+  };
   const channel = supabase.channel(`lists-${Date.now()}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'shopping_lists' }, refresh)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'list_items' }, refresh)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'travel_entries' }, refresh)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'list_members' }, refresh)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, refresh)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'catalog_items' }, refresh)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'list_templates' }, refresh)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'template_items' }, refresh)
-    .subscribe();
-  return () => { if (refreshTimer) clearTimeout(refreshTimer); void supabase.removeChannel(channel); };
+    .subscribe(status => { if (status === 'SUBSCRIBED') refresh(); });
+  // Mobile browsers suspend sockets in the background. Reconcile on return,
+  // and keep a fallback when Realtime is unavailable or misses an event.
+  const fallbackTimer = setInterval(refresh, 1500);
+  window.addEventListener('focus', refresh);
+  window.addEventListener('supabase-sync-success', refresh);
+  document.addEventListener('visibilitychange', refresh);
+  return () => {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    clearInterval(fallbackTimer);
+    window.removeEventListener('focus', refresh);
+    window.removeEventListener('supabase-sync-success', refresh);
+    document.removeEventListener('visibilitychange', refresh);
+    void supabase.removeChannel(channel);
+  };
 }
 
 export async function getListCollaborators(listId: string): Promise<ListCollaborator[]> {

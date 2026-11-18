@@ -1,5 +1,7 @@
 'use client';
 
+import { usePageScrollLock } from '@/hooks/use-page-scroll-lock';
+
 import React, { useState } from 'react';
 import { X, Copy, Check, MessageSquare } from 'lucide-react';
 import { ShoppingList } from '@/types/grocery';
@@ -13,6 +15,7 @@ interface ShareModalProps {
 
 export function ShareModal({ isOpen, onClose, list }: ShareModalProps) {
   const [copied, setCopied] = useState(false);
+  usePageScrollLock(isOpen && !!list, onClose);
 
   if (!isOpen || !list) return null;
 
@@ -87,7 +90,7 @@ export function ShareModal({ isOpen, onClose, list }: ShareModalProps) {
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-2xl max-w-lg w-full overflow-hidden shadow-xl border border-slate-200"
+        className="bg-white rounded-2xl max-w-lg w-full overflow-hidden md:max-h-[90dvh] md:overflow-y-auto md:overscroll-contain shadow-xl border border-slate-200"
         onClick={e => e.stopPropagation()}
       >
         <div className="p-4 border-b border-slate-100 flex items-center justify-between">

@@ -29,6 +29,7 @@ export interface TravelEntry {
 
 export interface Category {
   id: CategoryId;
+  icon?: string;
   label: string;
   color: string;
   bgColor: string;

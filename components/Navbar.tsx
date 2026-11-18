@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
-import { ShoppingCart, Plus, Layers, Sparkles, ArrowLeft, MoreVertical, Plane, Download, Copy, Pencil, Trash2 } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { ShoppingCart, Plus, Layers, Sparkles, ArrowLeft, Settings, Plane, MoreVertical, Pencil, Copy, Trash2 } from 'lucide-react';
 import { ListType } from '@/types/grocery';
+import { useOutsideDismiss } from '@/hooks/use-outside-dismiss';
 
 interface NavbarProps {
   activeTab: 'shopping' | 'lists' | 'stats' | 'settings';
@@ -19,11 +20,6 @@ interface NavbarProps {
   onRequestDeleteList?: () => void;
 }
 
-interface InstallPromptEvent extends Event {
-  prompt: () => Promise<void>;
-  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
-}
-
 export function Navbar({
   activeTab,
   onSelectTab,
@@ -32,63 +28,20 @@ export function Navbar({
   listTitle,
   itemCount = 0,
   listType = 'market',
-  onOpenListEdit,
   onBackFromList,
   onBackFromSettings,
+  onOpenListEdit,
   onDuplicateList,
   onRequestDeleteList,
 }: NavbarProps) {
   const isInsideShoppingList = activeTab === 'shopping' || activeTab === 'stats';
-  const [isHomeMenuOpen, setIsHomeMenuOpen] = useState(false);
   const [isListMenuOpen, setIsListMenuOpen] = useState(false);
-  const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
-  const homeMenuRef = useRef<HTMLDivElement>(null);
   const mobileListMenuRef = useRef<HTMLDivElement>(null);
-  const desktopListMenuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const closeOutside = (event: MouseEvent) => {
-      if (!homeMenuRef.current?.contains(event.target as Node)) setIsHomeMenuOpen(false);
-      if (!mobileListMenuRef.current?.contains(event.target as Node) && !desktopListMenuRef.current?.contains(event.target as Node)) setIsListMenuOpen(false);
-    };
-    document.addEventListener('pointerdown', closeOutside, true);
-    return () => document.removeEventListener('pointerdown', closeOutside, true);
-  }, []);
-
-  useEffect(() => {
-    const captureInstallPrompt = (event: Event) => {
-      event.preventDefault();
-      setInstallPrompt(event as InstallPromptEvent);
-    };
-    const clearInstallPrompt = () => setInstallPrompt(null);
-    window.addEventListener('beforeinstallprompt', captureInstallPrompt);
-    window.addEventListener('appinstalled', clearInstallPrompt);
-    return () => {
-      window.removeEventListener('beforeinstallprompt', captureInstallPrompt);
-      window.removeEventListener('appinstalled', clearInstallPrompt);
-    };
-  }, []);
-
-  const installApp = async () => {
-    if (!installPrompt) return;
-    setIsHomeMenuOpen(false);
-    await installPrompt.prompt();
-    await installPrompt.userChoice;
-    setInstallPrompt(null);
-  };
-
-  const listMenu = isListMenuOpen && <div className="absolute right-0 top-full mt-2 w-48 rounded-xl border border-slate-200 bg-white p-1 shadow-lg z-50">
-    <button type="button" onClick={() => { setIsListMenuOpen(false); onOpenListEdit?.(); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-slate-50"><Pencil size={16} />Editar lista</button>
-    <button type="button" onClick={() => { setIsListMenuOpen(false); onDuplicateList?.(); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-slate-50"><Copy size={16} />Duplicar lista</button>
-    <button type="button" onClick={() => { setIsListMenuOpen(false); onRequestDeleteList?.(); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-rose-700 hover:bg-rose-50"><Trash2 size={16} />Excluir lista</button>
-  </div>;
-
+  useOutsideDismiss(mobileListMenuRef, isListMenuOpen, () => setIsListMenuOpen(false));
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200">
       <div className="max-w-5xl mx-auto px-3 sm:px-6 h-14 flex items-center justify-between">
-        {/* MOBILE MODE QUANDO ESTÁ DENTRO DA LISTA:
-            Requisito do usuário: "No mobile, quanto entro na lista, não botões 'Mercado' 'minhas listas' e 'Nova' na barra superior,
-            deixe apenas o ícone de 3 pontos empilhados que deve abrir um popup de edição da lista atual selecionada." */}
+        {/* Mobile list header */}
         {isInsideShoppingList ? (
           <div className="flex sm:hidden items-center justify-between w-full">
             {/* Voltar para minhas listas + Título da lista atual */}
@@ -109,10 +62,21 @@ export function Navbar({
               </div>
             </div>
 
-            {/* Apenas o ícone de 3 pontos empilhados */}
-            <div ref={mobileListMenuRef} className="relative shrink-0">
-              <button type="button" onClick={() => setIsListMenuOpen(open => !open)} aria-label="Opções da lista" aria-expanded={isListMenuOpen} className="w-9 h-9 rounded-full text-slate-700 hover:text-slate-900 hover:bg-slate-100 active:bg-slate-200 flex items-center justify-center transition-colors"><MoreVertical size={20} /></button>
-              {listMenu}
+            <div className="flex shrink-0 items-center gap-1">
+              <div ref={mobileListMenuRef} className="relative" onKeyDown={event => {
+                if (event.key !== 'Escape' || !isListMenuOpen) return;
+                event.preventDefault();
+                event.stopPropagation();
+                setIsListMenuOpen(false);
+                mobileListMenuRef.current?.querySelector('button')?.focus();
+              }}>
+                <button type="button" onClick={() => setIsListMenuOpen(open => !open)} aria-label="Opções da lista" aria-expanded={isListMenuOpen} className="w-9 h-9 rounded-full text-slate-700 hover:bg-slate-100 flex items-center justify-center"><MoreVertical size={20} /></button>
+                {isListMenuOpen && <div className="absolute right-0 top-full z-50 mt-2 w-48 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
+                  <button type="button" onClick={() => { setIsListMenuOpen(false); onOpenListEdit?.(); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-slate-50"><Pencil size={16} />Editar lista</button>
+                  <button type="button" onClick={() => { setIsListMenuOpen(false); onDuplicateList?.(); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-slate-50"><Copy size={16} />Duplicar lista</button>
+                  <button type="button" onClick={() => { setIsListMenuOpen(false); onRequestDeleteList?.(); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-rose-700 hover:bg-rose-50"><Trash2 size={16} />Excluir lista</button>
+                </div>}
+              </div>
             </div>
           </div>
         ) : null}
@@ -179,7 +143,7 @@ export function Navbar({
             </button>}
           </nav>}
 
-          {/* Zone 3: Primary Action & 3-dots */}
+          {/* Zone 3: Primary action and settings */}
           {activeTab !== 'settings' && <div className="flex items-center gap-1.5">
             {activeTab !== 'lists' && <button
               onClick={onNewList}
@@ -189,18 +153,7 @@ export function Navbar({
               <span>Novo</span>
             </button>}
 
-            {activeTab === 'lists' && <div ref={homeMenuRef} className="relative">
-              <button type="button" onClick={() => setIsHomeMenuOpen(open => !open)} aria-label="Mais opções" aria-expanded={isHomeMenuOpen} className="w-9 h-9 rounded-lg text-slate-700 hover:bg-slate-100 flex items-center justify-center"><MoreVertical size={20} /></button>
-              {isHomeMenuOpen && <div className="absolute right-0 top-full mt-2 w-44 rounded-xl border border-slate-200 bg-white shadow-lg p-1 z-50">
-                {installPrompt && <button type="button" onClick={installApp} className="w-full rounded-lg px-3 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-slate-50 flex items-center gap-2"><Download size={16} />Instalar aplicativo</button>}
-                <button type="button" onClick={() => { setIsHomeMenuOpen(false); onOpenSettings(); }} className="w-full rounded-lg px-3 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-slate-50">Configurações</button>
-              </div>}
-            </div>}
-
-            {isInsideShoppingList && <div ref={desktopListMenuRef} className="relative">
-              <button type="button" onClick={() => setIsListMenuOpen(open => !open)} aria-label="Opções da lista" aria-expanded={isListMenuOpen} className="w-8 h-8 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 flex items-center justify-center transition-colors" title="Opções da lista"><MoreVertical size={17} /></button>
-              {listMenu}
-            </div>}
+            <button type="button" onClick={onOpenSettings} aria-label="Configurações" title="Configurações" className="w-9 h-9 rounded-lg text-slate-700 hover:text-slate-900 hover:bg-slate-100 flex items-center justify-center transition-colors"><Settings size={20} /></button>
           </div>}
         </div>
       </div>

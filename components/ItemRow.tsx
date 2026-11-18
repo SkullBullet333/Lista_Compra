@@ -113,6 +113,11 @@ export function ItemRow({
         <span>Excluir</span>
       </button>
       <div
+        onClick={event => {
+          if (!window.matchMedia('(min-width: 640px)').matches) return;
+          if ((event.target as HTMLElement).closest('button, input, [data-item-action]')) return;
+          onEdit(item);
+        }}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
@@ -124,7 +129,7 @@ export function ItemRow({
           didSwipe.current = false;
         }}
         style={{ transform: `translateX(${swipeOffset}px)`, touchAction: 'pan-y' }}
-        className={`group relative flex items-center gap-2 sm:gap-3 p-2 sm:p-3 sm:px-4 rounded-xl border transition-[transform,background-color,border-color,opacity] duration-150 ${
+        className={`group relative flex items-center gap-2 sm:gap-3 p-2 sm:p-3 sm:px-4 sm:cursor-pointer rounded-xl border transition-[transform,background-color,border-color,opacity] duration-150 ${
         item.checked
           ? 'bg-slate-50 border-slate-200'
           : 'bg-white border-slate-200/90 hover:border-slate-300 shadow-xs'
@@ -153,6 +158,7 @@ export function ItemRow({
       </button>
 
       {/* 2. A foto */}
+      <span className="contents" data-item-action>
       <ItemImage
         key={item.imageUrl || 'no-photo'}
         src={item.imageUrl}
@@ -162,9 +168,11 @@ export function ItemRow({
         className="w-9 h-9 sm:w-11 sm:h-11 rounded-lg shrink-0 cursor-pointer"
         onClick={item.imageUrl ? () => onOpenImage(item.imageUrl!, item.name) : () => onEdit(item)}
       />
+      </span>
 
       {/* 3. O nome */}
       <div
+        data-item-action
         className="flex-1 min-w-0 cursor-pointer py-0.5"
         onClick={() => onEdit(item)}
       >
@@ -316,12 +324,13 @@ export function ItemRow({
       </div>
 
       {/* Ações adicionais no desktop; no celular, arraste para a esquerda. */}
-      <div className="hidden sm:flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className="hidden sm:flex items-center gap-0.5 shrink-0">
         <button
           type="button"
           onClick={() => onEdit(item)}
           className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 transition-colors"
           title="Editar item"
+          aria-label={`Editar ${item.name}`}
         >
           <Edit3 size={14} />
         </button>

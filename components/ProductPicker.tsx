@@ -3,7 +3,7 @@
 import React, { useMemo, useState } from 'react';
 import { Check, Plus, Search, X } from 'lucide-react';
 import { CategoryId, GroceryItem, ShoppingList } from '@/types/grocery';
-import { getAllCategories } from '@/lib/categories';
+import { useCategories } from '@/hooks/use-categories';
 import { getLatestPrice, getRegisteredItems, RegisteredCandidate, saveItemConfig } from '@/lib/storage';
 import { guessCategory } from '@/lib/catalog';
 
@@ -38,7 +38,7 @@ function updateListItems(list: ShoppingList, items: GroceryItem[]): ShoppingList
 export function ProductPicker({ list, lists, onUpdateList, onClose }: ProductPickerProps) {
   const [query, setQuery] = useState('');
   const [initialItemIds] = useState(() => new Set(list.items.map(item => item.id)));
-  const categories = useMemo(() => getAllCategories(), []);
+  const categories = useCategories();
   const hasNewItems = list.items.some(item => !initialItemIds.has(item.id));
   const products = useMemo(() => getRegisteredItems(lists), [lists]);
   const visibleProducts = useMemo(() => {

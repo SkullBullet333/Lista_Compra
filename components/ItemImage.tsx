@@ -1,9 +1,9 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Apple, Croissant, Package, Beef, Milk, Sparkles, Coffee, ShoppingBag } from 'lucide-react';
+import { CategoryIcon } from '@/components/CategoryIcon';
 import { CategoryId } from '@/types/grocery';
-import { getAllCategories } from '@/lib/categories';
+import { useCategories } from '@/hooks/use-categories';
 import { getThemePreferences } from '@/lib/preferences';
 
 interface ItemImageProps {
@@ -38,28 +38,7 @@ export function ItemImage({
     lg: 26,
   };
 
-  const getCategoryIcon = (cat: CategoryId, iconSize: number) => {
-    switch (cat) {
-      case 'feira':
-        return <Apple size={iconSize} className="text-emerald-700" />;
-      case 'padaria':
-        return <Croissant size={iconSize} className="text-amber-700" />;
-      case 'mercearia':
-        return <Package size={iconSize} className="text-orange-700" />;
-      case 'carnes':
-        return <Beef size={iconSize} className="text-rose-700" />;
-      case 'laticinios':
-        return <Milk size={iconSize} className="text-sky-700" />;
-      case 'limpeza':
-        return <Sparkles size={iconSize} className="text-purple-700" />;
-      case 'bebidas':
-        return <Coffee size={iconSize} className="text-teal-700" />;
-      default:
-        return <ShoppingBag size={iconSize} className="text-slate-600" />;
-    }
-  };
-
-  const categories = getAllCategories();
+  const categories = useCategories();
   const categoryMeta = categories[category] || categories.outros;
   const showImages = getThemePreferences().showImages;
 
@@ -70,7 +49,7 @@ export function ItemImage({
       style={{ backgroundColor: categoryMeta.bgColor }}
       title={`${alt} (${categoryMeta.label})`}
     >
-      {getCategoryIcon(category, iconSizes[size])}
+      <CategoryIcon category={category} size={iconSizes[size]} />
     </div>
   );
 
@@ -95,7 +74,7 @@ export function ItemImage({
           className="absolute inset-0 flex items-center justify-center bg-slate-100"
           style={{ backgroundColor: categoryMeta.bgColor }}
         >
-          {getCategoryIcon(category, iconSizes[size])}
+          <CategoryIcon category={category} size={iconSizes[size]} />
         </div>
       )}
       {/* eslint-disable-next-line @next/next/no-img-element */}

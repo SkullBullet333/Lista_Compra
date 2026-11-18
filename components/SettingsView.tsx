@@ -1,17 +1,24 @@
 'use client';
 
+import { usePageScrollLock } from '@/hooks/use-page-scroll-lock';
+
 import React, { useEffect, useRef, useState } from 'react';
-import { Check, ChevronRight, Circle, Cloud, Download, Eye, EyeOff, FileSpreadsheet, LayoutTemplate, LogOut, Moon, PackagePlus, Palette, Search, Sun, Tags, Trash2, Upload } from 'lucide-react';
+import { Check, ChevronRight, Circle, Download, Eye, EyeOff, FileSpreadsheet, LayoutTemplate, LogOut, Moon, PackagePlus, Palette, Search, Sun, Tags, Trash2, Upload } from 'lucide-react';
 import { Category, CategoryId, ListTemplate, SavedItemConfig, ThemeMode } from '@/types/grocery';
 import { SHARED_CATALOG_EDIT } from '@/lib/catalog-mode';
-import { getAllCategories, getCustomCategories, makeCustomCategory, saveCustomCategories } from '@/lib/categories';
+import { makeCustomCategory, saveCustomCategories } from '@/lib/categories';
+import { useCategories } from '@/hooks/use-categories';
 import { deleteItemConfig, formatCurrency, getEditableItemConfigs, getRegisteredItems, getStoredLists, saveEditedItemConfig, saveItemConfig } from '@/lib/storage';
-import { applyTheme, getThemePreferences, saveThemePreferences } from '@/lib/preferences';
+import { saveThemePreferences } from '@/lib/preferences';
+import { useThemePreferences } from '@/hooks/use-theme-preferences';
+import { ColorPicker } from '@/components/ColorPicker';
 import { deleteTemplate, getTemplates, saveTemplate } from '@/lib/templates';
-import { backupAppData, deleteSharedCatalogItem, importSharedCatalogItems, saveSharedCatalogItem, scheduleSupabaseBackup } from '@/lib/supabase';
+import { deleteSharedCatalogItem, importSharedCatalogItems, saveSharedCatalogItem, scheduleSupabaseBackup } from '@/lib/supabase';
 import { getSupabaseClient, uploadProductImage } from '@/lib/supabase';
 import { ProductPhotoEditor } from '@/components/ProductPhotoEditor';
 import { ImagePreviewModal } from '@/components/ImagePreviewModal';
+import { CategorySelect } from '@/components/CategorySelect';
+import { CategoryIcon, CategoryIconPicker } from '@/components/CategoryIcon';
 
 export type SettingsSection = 'home' | 'categories' | 'items' | 'templates' | 'appearance';
 
@@ -61,20 +68,20 @@ type ImportPreview =
   | { kind: 'items'; fileName: string; items: SavedItemConfig[]; ignored: IgnoredImportRow[] }
   | { kind: 'templates'; fileName: string; templates: ListTemplate[]; ignored: IgnoredImportRow[] };
 
-export function SettingsView({ userEmail, onSignOut, section: controlledSection, onSectionChange }: { userEmail?: string; onSignOut?: () => void; section?: SettingsSection; onSectionChange?: (section: SettingsSection) => void }) {
+export function SettingsView({ onInstallApp, userEmail, onSignOut, section: controlledSection, onSectionChange }: { onInstallApp?: () => Promise<void>; userEmail?: string; onSignOut?: () => void; section?: SettingsSection; onSectionChange?: (section: SettingsSection) => void }) {
   const [internalSection, setInternalSection] = useState<SettingsSection>('home');
   const section = controlledSection ?? internalSection;
   const setSection = (nextSection: SettingsSection) => {
     setInternalSection(nextSection);
     onSectionChange?.(nextSection);
   };
-  const [customCategories, setCustomCategories] = useState(getCustomCategories);
   const [savedItems, setSavedItems] = useState(getEditableItemConfigs);
   const [itemSearch, setItemSearch] = useState('');
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
   const [isCategoryEditorOpen, setIsCategoryEditorOpen] = useState(false);
   const [categoryName, setCategoryName] = useState('');
   const [categoryColor, setCategoryColor] = useState('#0d9488');
+  const [categoryIcon, setCategoryIcon] = useState('shopping-bag');
   const [categorySwipeId, setCategorySwipeId] = useState<string | null>(null);
   const categoryTouchStart = useRef<number | null>(null);
   const [itemName, setItemName] = useState('');
@@ -98,14 +105,26 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
   const [templateName, setTemplateName] = useState('');
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
   const [templateToDelete, setTemplateToDelete] = useState<ListTemplate | null>(null);
+  usePageScrollLock(!!importPreview || (section === 'categories' && isCategoryEditorOpen) || (section === 'items' && !!itemToDelete) || (section === 'templates' && !!templateToDelete), () => {
+    if (importPreview) setImportPreview(null);
+    else if (section === 'categories') setIsCategoryEditorOpen(false);
+    else if (section === 'items') setItemToDelete(null);
+    else if (section === 'templates') setTemplateToDelete(null);
+  });
   const [templateDescription, setTemplateDescription] = useState('');
   const [templateEmoji, setTemplateEmoji] = useState('🛒');
   const [templateMarketName, setTemplateMarketName] = useState('');
   const [templateBudget, setTemplateBudget] = useState('');
   const [templateItems, setTemplateItems] = useState<string[]>([]);
-  const [theme, setTheme] = useState(getThemePreferences);
-  const categories = getAllCategories();
+  const [templateItemSearch, setTemplateItemSearch] = useState('');
+  const theme = useThemePreferences();
+  const categories = useCategories();
+  const customCategories = Object.values(categories).filter(category => category.id.startsWith('custom-'));
   const registeredItems = getRegisteredItems();
+  const templateItemSearchTerm = normalizeItemSearch(templateItemSearch.trim());
+  const filteredTemplateItemNames = [...registeredItems.map(item => item.name), ...(templates.find(template => template.id === editingTemplateId)?.items.map(item => item.name) || [])]
+    .filter((name, index, all) => all.indexOf(name) === index)
+    .filter(name => normalizeItemSearch(name).includes(templateItemSearchTerm));
   const searchTerm = normalizeItemSearch(itemSearch.trim());
   const filteredSavedItems = searchTerm
     ? savedItems.filter(item => [item.name, item.category, categories[item.category]?.label || 'Outros Itens']
@@ -127,18 +146,18 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
   const saveCategory = (event: React.FormEvent) => {
     event.preventDefault();
     const label = categoryName.trim();
-    if (!label) return;
+    if (!label || (editingCategoryId && !editingCategoryId.startsWith('custom-'))) return;
     if (Object.values(categories).some(category => category.id !== editingCategoryId && category.label.toLocaleLowerCase('pt-BR') === label.toLocaleLowerCase('pt-BR'))) {
       setNotice('Já existe uma categoria com esse nome.');
       return;
     }
     const next: Category[] = editingCategoryId
-      ? customCategories.map(category => category.id === editingCategoryId ? { ...category, label } : category)
-      : [...customCategories, makeCustomCategory(label, Object.values(categories).map(category => category.color))];
+      ? customCategories.map(category => category.id === editingCategoryId ? { ...category, label, icon: categoryIcon } : category)
+      : [...customCategories, makeCustomCategory(label, Object.values(categories).map(category => category.color), categoryIcon)];
     try {
       saveCustomCategories(next);
-      setCustomCategories(next);
       setCategoryName('');
+      setCategoryIcon('shopping-bag');
       setCategoryColor('#0d9488');
       setIsCategoryEditorOpen(false);
       setEditingCategoryId(null);
@@ -150,7 +169,9 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
   };
 
   const editCategory = (category: Category) => {
+    if (!category.id.startsWith('custom-')) return;
     setEditingCategoryId(category.id);
+    setCategoryIcon(category.icon || 'shopping-bag');
     setCategoryName(category.label);
     setCategoryColor(category.color);
     setIsCategoryEditorOpen(true);
@@ -160,7 +181,6 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
   const deleteCategory = (id: string) => {
     const next = customCategories.filter(category => category.id !== id);
     saveCustomCategories(next);
-    setCustomCategories(next);
     setCategorySwipeId(null);
     scheduleSupabaseBackup(getStoredLists());
   };
@@ -555,10 +575,12 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
     setTemplateMarketName('');
     setTemplateBudget('');
     setTemplateItems([]);
+    setTemplateItemSearch('');
   };
 
   const editTemplate = (template: ListTemplate) => {
     setEditingTemplateId(template.id);
+    setTemplateItemSearch('');
     setTemplateName(template.name);
     setTemplateDescription(template.description);
     setTemplateEmoji(template.emoji);
@@ -578,21 +600,9 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
 
   const updateTheme = (mode: ThemeMode, primaryColor = theme.primaryColor, showImages = theme.showImages, travelColor = theme.travelColor) => {
     const next = { mode, primaryColor, showImages, travelColor };
-    setTheme(next);
     saveThemePreferences(next);
-    applyTheme(next);
     setNotice('Aparência atualizada.');
     scheduleSupabaseBackup(getStoredLists());
-  };
-
-  const runBackup = async () => {
-    setNotice('Fazendo backup...');
-    try {
-      const backedUp = await backupAppData(getStoredLists());
-      setNotice(backedUp ? 'Backup concluído no Supabase.' : 'Configure as chaves do Supabase para ativar o backup.');
-    } catch {
-      setNotice('Não foi possível concluir o backup. Verifique a configuração do Supabase.');
-    }
   };
 
   const openSection = (nextSection: Exclude<typeof section, 'home'>) => {
@@ -608,7 +618,7 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
   ];
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-5 pb-24 md:pb-3">
+    <div className="app-settings-page max-w-4xl mx-auto px-4 sm:px-6 py-5 pb-24 md:pb-3">
       {section === 'home' ? <>
         <div className="mb-6">
           <h1 className="text-xl font-extrabold text-slate-900">Configurações</h1>
@@ -623,7 +633,7 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
         <section>
           <h2 className="mb-2 px-1 text-xs font-bold uppercase tracking-wide text-slate-500">Conta e dados</h2>
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white divide-y divide-slate-100">
-            <button type="button" onClick={runBackup} className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-slate-50 active:bg-slate-100"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-50 text-sky-700"><Cloud size={20} /></span><span className="min-w-0 flex-1"><span className="block text-sm font-bold text-slate-800">Sincronizar agora</span><span className="mt-0.5 block text-xs text-slate-500">Faça backup das listas no Supabase.</span></span><ChevronRight size={20} className="shrink-0 text-slate-400" /></button>
+            {onInstallApp && <button type="button" onClick={() => { void onInstallApp(); }} className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-slate-50 active:bg-slate-100"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><Download size={20} /></span><span className="min-w-0 flex-1"><span className="block text-sm font-bold text-slate-800">Instalar aplicativo</span><span className="mt-0.5 block text-xs text-slate-500">Adicione o aplicativo ao seu dispositivo.</span></span><ChevronRight size={20} className="shrink-0 text-slate-400" /></button>}
             {userEmail && <div className="flex items-center gap-3 px-4 py-3.5"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600"><Circle size={18} /></span><span className="min-w-0 flex-1"><span className="block text-sm font-bold text-slate-800">Conta conectada</span><span className="mt-0.5 block truncate text-xs text-slate-500">{userEmail}</span></span></div>}
             {onSignOut && <button type="button" onClick={onSignOut} className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-rose-50 active:bg-rose-100"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-rose-700"><LogOut size={20} /></span><span className="flex-1 text-sm font-bold text-rose-700">Sair da conta</span><ChevronRight size={20} className="shrink-0 text-rose-400" /></button>}
           </div>
@@ -631,62 +641,82 @@ export function SettingsView({ userEmail, onSignOut, section: controlledSection,
       </> : <>
       {notice && <p role="status" className="mb-4 text-sm font-semibold text-emerald-800 bg-emerald-50 rounded-xl px-3 py-2">{notice}</p>}
 
-      {section === 'categories' ? <><div className="grid md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-4 items-start">
+      {section === 'categories' ? <><div className="app-panel-grid grid md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-4 items-start">
         <form onSubmit={saveCategory} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
           <h2 className="font-extrabold text-slate-900">Nova categoria</h2>
+          <CategoryIconPicker value={categoryIcon} onChange={setCategoryIcon} />
           <label className="block text-xs font-bold text-slate-700">Nome<input required maxLength={40} value={categoryName} onChange={event => setCategoryName(event.target.value)} placeholder="Ex: Pet shop" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label>
           <div className="flex gap-2"><button type="submit" className="flex-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 text-sm font-bold flex items-center justify-center gap-2"><Check size={16} />Salvar categoria</button></div>
         </form>
-        <div className="bg-white border border-slate-200 rounded-2xl p-4">
+        <div className="app-panel-results bg-white border border-slate-200 rounded-2xl p-4">
           <h2 className="font-extrabold text-slate-900 mb-3">Categorias disponíveis</h2>
-          <div className="space-y-1 max-h-[60vh] overflow-y-auto">
+          <div className="app-panel-scroll space-y-1 max-h-[60vh] overflow-y-auto pr-3 [scrollbar-gutter:stable]">
             {Object.values(categories).map(category => {
               const isCustom = customCategories.some(custom => custom.id === category.id);
               const isSwiped = categorySwipeId === category.id;
               return <div key={category.id} className="relative overflow-hidden rounded-xl border-b border-slate-100 last:border-0">
                 {isCustom && <button type="button" onClick={() => deleteCategory(category.id)} className="absolute inset-y-0 right-0 flex w-24 items-center justify-center bg-rose-600 text-xs font-bold text-white">Excluir</button>}
-                <button type="button" disabled={!isCustom} onClick={() => { if (!isCustom) return; if (isSwiped) { setCategorySwipeId(null); return; } editCategory(category); }} onTouchStart={event => { categoryTouchStart.current = event.touches[0].clientX; }} onTouchEnd={event => { const start = categoryTouchStart.current; const offset = start === null ? 0 : event.changedTouches[0].clientX - start; if (isCustom && offset < -35) setCategorySwipeId(category.id); if (isCustom && offset > 35) setCategorySwipeId(null); categoryTouchStart.current = null; }} style={{ width: isCustom && isSwiped ? 'calc(100% - 96px)' : '100%' }} className={`relative flex items-center gap-2 bg-white py-2 text-left transition-[width] duration-150 ${isCustom ? 'cursor-pointer' : 'cursor-default'}`}><span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: category.color }} /><span className="flex-1 text-sm text-slate-800">{category.label}</span>{!isCustom && <span className="text-[11px] text-slate-400">Padrão</span>}</button>
+                <button type="button" disabled={!isCustom} onClick={() => { if (!isCustom) return; if (isSwiped) { setCategorySwipeId(null); return; } editCategory(category); }} onTouchStart={event => { categoryTouchStart.current = event.touches[0].clientX; }} onTouchEnd={event => { const start = categoryTouchStart.current; const offset = start === null ? 0 : event.changedTouches[0].clientX - start; if (isCustom && offset < -35) setCategorySwipeId(category.id); if (isCustom && offset > 35) setCategorySwipeId(null); categoryTouchStart.current = null; }} style={{ width: isCustom && isSwiped ? 'calc(100% - 96px)' : '100%' }} className={`relative flex items-center gap-2 bg-white py-2 text-left transition-[width] duration-150 ${isCustom ? 'cursor-pointer' : 'cursor-default'}`}><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg" style={{ backgroundColor: category.bgColor }}><CategoryIcon category={category.id} size={18} /></span><span className="flex-1 text-sm text-slate-800">{category.label}</span>{!isCustom && <span className="text-[11px] text-slate-400">Padrão</span>}</button>
               </div>;
             })}
           </div>
         </div>
-      </div>{isCategoryEditorOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={() => { setIsCategoryEditorOpen(false); setEditingCategoryId(null); setCategoryName(''); }}><form onSubmit={saveCategory} onClick={event => event.stopPropagation()} className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 space-y-4"><label className="block text-xs font-bold text-slate-700">Nome<input required maxLength={40} value={categoryName} onChange={event => setCategoryName(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label><label className="flex items-center justify-between text-xs font-bold text-slate-700">Cor<input type="color" value={categoryColor} onChange={event => setCategoryColor(event.target.value)} className="h-10 w-12 cursor-pointer rounded-lg" /></label><div className="flex gap-2"><button type="button" onClick={() => { setIsCategoryEditorOpen(false); setEditingCategoryId(null); setCategoryName(''); }} className="flex-1 rounded-xl border border-slate-300 py-2.5 text-sm font-bold text-slate-700">Cancelar</button><button type="submit" className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-sm font-bold text-white">Salvar</button></div></form></div>}</> : section === 'items' ? <><div className="mb-4 hidden rounded-2xl border border-slate-200 bg-white p-4 md:block"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><FileSpreadsheet size={20} /></span><div><h2 className="text-sm font-extrabold text-slate-900">Importar itens por Excel</h2><p className="text-xs text-slate-500">Baixe os itens atuais; os já cadastrados serão ignorados na importação.</p></div></div><div className="flex gap-2"><button type="button" onClick={() => { void downloadItemImportExample(); }} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"><Download size={15} />Modelo</button><label className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700"><Upload size={15} />{isImportingItems ? 'Importando...' : 'Importar'}<input type="file" accept=".xlsx,.xls" className="hidden" disabled={isImportingItems} onChange={event => { void importItemsFromSpreadsheet(event.target.files?.[0]); event.currentTarget.value = ''; }} /></label></div></div></div><div className="grid md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-4 items-start">
+      </div>{isCategoryEditorOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={() => { setIsCategoryEditorOpen(false); setEditingCategoryId(null); setCategoryName(''); setCategoryIcon('shopping-bag'); }}><form onSubmit={saveCategory} onClick={event => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="Editar categoria" className="max-h-[90dvh] w-full max-w-sm overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 space-y-4"><h2 className="font-extrabold text-slate-900">Editar categoria</h2><CategoryIconPicker value={categoryIcon} onChange={setCategoryIcon} /><label className="block text-xs font-bold text-slate-700">Nome<input required maxLength={40} value={categoryName} onChange={event => setCategoryName(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label><ColorPicker title="Cor da categoria" value={categoryColor} onChange={setCategoryColor} /><div className="flex gap-2"><button type="button" onClick={() => { setIsCategoryEditorOpen(false); setEditingCategoryId(null); setCategoryName(''); setCategoryIcon('shopping-bag'); }} className="flex-1 rounded-xl border border-slate-300 py-2.5 text-sm font-bold text-slate-700">Cancelar</button><button type="submit" className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-sm font-bold text-white">Salvar</button></div></form></div>}</> : section === 'items' ? <><div className="mb-4 hidden rounded-2xl border border-slate-200 bg-white p-4 md:block"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><FileSpreadsheet size={20} /></span><div><h2 className="text-sm font-extrabold text-slate-900">Importar itens por Excel</h2><p className="text-xs text-slate-500">Baixe os itens atuais; os já cadastrados serão ignorados na importação.</p></div></div><div className="flex gap-2"><button type="button" onClick={() => { void downloadItemImportExample(); }} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"><Download size={15} />Modelo</button><label className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700"><Upload size={15} />{isImportingItems ? 'Importando...' : 'Importar'}<input type="file" accept=".xlsx,.xls" className="hidden" disabled={isImportingItems} onChange={event => { void importItemsFromSpreadsheet(event.target.files?.[0]); event.currentTarget.value = ''; }} /></label></div></div></div><div className="app-panel-grid grid md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-4 items-start">
         <form onSubmit={saveItem} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
           <h2 className="font-extrabold text-slate-900">{editingItemName ? 'Editar item' : 'Cadastrar item'}</h2>
           <fieldset disabled={isSavingItem || isPreparingPhoto} className="space-y-3">
           <label className="block text-xs font-bold text-slate-700">Nome<input required maxLength={100} value={itemName} onChange={event => setItemName(event.target.value)} placeholder="Ex: Ração para cachorro" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label>
-          <div className="grid grid-cols-2 gap-2"><label className="block text-xs font-bold text-slate-700">Categoria<select value={itemCategory} onChange={event => setItemCategory(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-2 py-2.5 text-sm text-slate-900">{Object.values(categories).map(category => <option key={category.id} value={category.id}>{category.label}</option>)}</select></label><label className="block text-xs font-bold text-slate-700">Unidade<input value={itemUnit} onChange={event => setItemUnit(event.target.value)} maxLength={20} placeholder="un, kg, pct..." className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label></div>
+          <div className="grid grid-cols-2 sm:grid-cols-[minmax(0,1fr)_6rem] gap-2">
+            <div className="min-w-0">
+              <span className="block text-xs font-bold text-slate-700">Categoria</span>
+              <div className="mt-1 hidden sm:block"><CategorySelect value={itemCategory} onChange={setItemCategory} disabled={isSavingItem || isPreparingPhoto} /></div>
+              <select aria-label="Categoria" value={itemCategory} onChange={event => setItemCategory(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-2 py-2.5 text-sm text-slate-900 sm:hidden">{Object.values(categories).map(category => <option key={category.id} value={category.id}>{category.label}</option>)}</select>
+            </div>
+            <label className="block min-w-0 text-xs font-bold text-slate-700">Unidade<input value={itemUnit} onChange={event => setItemUnit(event.target.value)} maxLength={20} placeholder="un, kg, pct..." className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 sm:h-[46px] text-sm text-slate-900" /></label>
+          </div>
           <label className="block text-xs font-bold text-slate-700">Preço padrão (R$)<input inputMode="decimal" value={itemPrice} onChange={event => setItemPrice(event.target.value.replace(/[^0-9,.]/g, ''))} placeholder="0,00" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label>
           <label className="block text-xs font-bold text-slate-700">Observação<input value={itemNotes} onChange={event => setItemNotes(event.target.value)} placeholder="Marca ou preferência" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label>
           <ProductPhotoEditor value={itemImageUrl} onChange={setItemImageUrl} onBusyChange={setIsPreparingPhoto} />
           <div className="flex gap-2"><button type="submit" className="flex-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 text-sm font-bold flex items-center justify-center gap-2"><Check size={16} />{isSavingItem ? 'Salvando...' : editingItemName ? 'Salvar alterações' : 'Cadastrar item'}</button>{editingItemName && <button type="button" onClick={() => { setEditingItemName(null); setItemName(''); setItemCategory('feira'); setItemUnit('un'); setItemPrice(''); setItemNotes(''); setItemImageUrl(''); }} className="rounded-xl border border-slate-300 px-3 text-sm font-semibold text-slate-600">Cancelar</button>}</div>
         </fieldset>
         </form>
-        <div className="bg-white border border-slate-200 rounded-2xl p-4">
+        <div className="app-panel-results bg-white border border-slate-200 rounded-2xl p-4">
           <h2 className="font-extrabold text-slate-900 mb-3">Itens cadastrados</h2>
-          <label className="relative mb-3 block">
+          <label className="mb-3 block">
+            <span className="mb-1 hidden text-xs font-bold text-slate-700 md:block">Buscar item ou categoria</span>
+            <div className="relative">
             <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input type="search" aria-label="Buscar itens cadastrados" placeholder="Buscar item ou categoria" value={itemSearch} onChange={event => setItemSearch(event.target.value)} className="w-full rounded-xl border border-slate-300 py-2.5 pl-9 pr-3 text-sm text-slate-900 placeholder:text-slate-400" />
+            </div>
           </label>
-          {filteredSavedItems.length ? <div className="max-h-[60vh] overflow-y-auto divide-y divide-slate-100">{filteredSavedItems.map(item => <div key={item.name.toLocaleLowerCase('pt-BR')} className="flex items-center gap-2 py-2">{item.imageUrl && <button type="button" onClick={() => setPreviewItem(item)} aria-label={`Ver foto de ${item.name}`} className="shrink-0 rounded-lg border border-slate-200 overflow-hidden">{/* eslint-disable-next-line @next/next/no-img-element */}
+          {filteredSavedItems.length ? <div className="app-panel-scroll max-h-[60vh] overflow-y-auto divide-y divide-slate-100">{filteredSavedItems.map(item => <div key={item.name.toLocaleLowerCase('pt-BR')} className="flex items-center gap-2 py-2">{item.imageUrl && <button type="button" onClick={() => setPreviewItem(item)} aria-label={`Ver foto de ${item.name}`} className="shrink-0 rounded-lg border border-slate-200 overflow-hidden">{/* eslint-disable-next-line @next/next/no-img-element */}
 <img src={item.imageUrl} alt={item.name} referrerPolicy="no-referrer" className="h-11 w-11 object-cover" /></button>}<div className="flex-1 min-w-0"><p className="text-sm font-semibold text-slate-800 truncate">{item.name}</p><p className="text-xs text-slate-500">{categories[item.category]?.label || 'Outros Itens'} · {item.unit}</p></div><div className="flex shrink-0 items-center gap-1"><button type="button" onClick={() => editItem(item)} className="rounded-lg px-2 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-50">Editar</button><button type="button" onClick={() => setItemToDelete(item)} aria-label={`Excluir ${item.name}`} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-50"><Trash2 size={14} />Excluir</button></div></div>)}</div> : <p className="text-sm text-slate-500 py-4">{savedItems.length ? 'Nenhum item encontrado.' : 'Nenhum item cadastrado.'}</p>}
         </div>
-      </div>{itemToDelete && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={() => setItemToDelete(null)}><div role="dialog" aria-modal="true" aria-labelledby="delete-item-title" onClick={event => event.stopPropagation()} className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 shadow-xl"><h2 id="delete-item-title" className="font-extrabold text-slate-900">Excluir item cadastrado?</h2><p className="mt-2 text-sm text-slate-600">O item <strong>{itemToDelete.name}</strong> deixará de aparecer entre os produtos cadastrados. Itens já adicionados às listas não serão removidos.</p><div className="mt-5 flex gap-2"><button type="button" onClick={() => setItemToDelete(null)} className="flex-1 rounded-xl border border-slate-300 px-3 py-2.5 text-sm font-bold text-slate-700">Cancelar</button><button type="button" onClick={() => deleteSavedItem(itemToDelete)} className="flex-1 rounded-xl bg-rose-600 px-3 py-2.5 text-sm font-bold text-white hover:bg-rose-700">Excluir</button></div></div></div>}</> : section === 'templates' ? <><div className="mb-4 hidden rounded-2xl border border-slate-200 bg-white p-4 md:block"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><FileSpreadsheet size={20} /></span><div><h2 className="text-sm font-extrabold text-slate-900">Importar modelos por Excel</h2><p className="text-xs text-slate-500">Baixe os modelos atuais; listas já cadastradas serão ignoradas na importação.</p></div></div><div className="flex gap-2"><button type="button" onClick={() => { void downloadTemplateImportExample(); }} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"><Download size={15} />Modelo</button><label className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700"><Upload size={15} />{isImportingTemplates ? 'Importando...' : 'Importar'}<input type="file" accept=".xlsx,.xls" className="hidden" disabled={isImportingTemplates} onChange={event => { void importTemplatesFromSpreadsheet(event.target.files?.[0]); event.currentTarget.value = ''; }} /></label></div></div></div><div className="grid md:grid-cols-2 gap-4 items-start">
+      </div>{itemToDelete && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={() => setItemToDelete(null)}><div role="dialog" aria-modal="true" aria-labelledby="delete-item-title" onClick={event => event.stopPropagation()} className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 shadow-xl"><h2 id="delete-item-title" className="font-extrabold text-slate-900">Excluir item cadastrado?</h2><p className="mt-2 text-sm text-slate-600">O item <strong>{itemToDelete.name}</strong> deixará de aparecer entre os produtos cadastrados. Itens já adicionados às listas não serão removidos.</p><div className="mt-5 flex gap-2"><button type="button" onClick={() => setItemToDelete(null)} className="flex-1 rounded-xl border border-slate-300 px-3 py-2.5 text-sm font-bold text-slate-700">Cancelar</button><button type="button" onClick={() => deleteSavedItem(itemToDelete)} className="flex-1 rounded-xl bg-rose-600 px-3 py-2.5 text-sm font-bold text-white hover:bg-rose-700">Excluir</button></div></div></div>}</> : section === 'templates' ? <><div className="mb-4 hidden rounded-2xl border border-slate-200 bg-white p-4 md:block"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><FileSpreadsheet size={20} /></span><div><h2 className="text-sm font-extrabold text-slate-900">Importar modelos por Excel</h2><p className="text-xs text-slate-500">Baixe os modelos atuais; listas já cadastradas serão ignoradas na importação.</p></div></div><div className="flex gap-2"><button type="button" onClick={() => { void downloadTemplateImportExample(); }} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"><Download size={15} />Modelo</button><label className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700"><Upload size={15} />{isImportingTemplates ? 'Importando...' : 'Importar'}<input type="file" accept=".xlsx,.xls" className="hidden" disabled={isImportingTemplates} onChange={event => { void importTemplatesFromSpreadsheet(event.target.files?.[0]); event.currentTarget.value = ''; }} /></label></div></div></div><div className="app-panel-grid grid md:grid-cols-2 gap-4 items-start">
         <form onSubmit={saveListTemplate} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
           <h2 className="font-extrabold text-slate-900">{editingTemplateId ? 'Editar modelo de lista' : 'Novo modelo de lista'}</h2>
           <div className="grid grid-cols-[64px_1fr] gap-2"><label className="block text-xs font-bold text-slate-700">Ícone<input value={templateEmoji} onChange={event => setTemplateEmoji(event.target.value)} maxLength={4} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-center" /></label><label className="block text-xs font-bold text-slate-700">Nome<input required maxLength={100} value={templateName} onChange={event => setTemplateName(event.target.value)} placeholder="Ex: Compras para festa" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label></div>
           <label className="block text-xs font-bold text-slate-700">Descrição<input value={templateDescription} onChange={event => setTemplateDescription(event.target.value)} placeholder="Ex: Bebidas e petiscos" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label>
           <div className="grid grid-cols-2 gap-2"><label className="block text-xs font-bold text-slate-700">Mercado<input value={templateMarketName} onChange={event => setTemplateMarketName(event.target.value)} placeholder="Opcional" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label><label className="block text-xs font-bold text-slate-700">Orçamento (R$)<input inputMode="decimal" value={templateBudget} onChange={event => setTemplateBudget(event.target.value.replace(/[^0-9,.]/g, ''))} placeholder="Opcional" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label></div>
-          <fieldset><legend className="text-xs font-bold text-slate-700 mb-2">Itens do modelo</legend><div className="max-h-64 overflow-y-auto rounded-xl border border-slate-200 divide-y divide-slate-100">{[...registeredItems.map(item => item.name), ...(templates.find(template => template.id === editingTemplateId)?.items.map(item => item.name) || [])].filter((name, index, all) => all.indexOf(name) === index).map(name => <label key={name} className="flex items-center gap-2 px-3 py-2 text-sm text-slate-700"><input type="checkbox" checked={templateItems.includes(name)} onChange={event => setTemplateItems(current => event.target.checked ? [...current, name] : current.filter(selected => selected !== name))} /><span className="flex-1 truncate">{name}</span></label>)}</div></fieldset>
+          <fieldset>
+            <legend className="text-xs font-bold text-slate-700 mb-2">Itens do modelo</legend>
+            <label className="relative mb-2 block">
+              <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input type="search" aria-label="Buscar itens do modelo" placeholder="Buscar item do modelo" value={templateItemSearch} onChange={event => setTemplateItemSearch(event.target.value)} className="w-full rounded-xl border border-slate-300 py-2.5 pl-9 pr-3 text-sm text-slate-900 placeholder:text-slate-400" />
+            </label>
+            <div className="max-h-64 overflow-y-auto rounded-xl border border-slate-200 divide-y divide-slate-100">
+              {filteredTemplateItemNames.length ? filteredTemplateItemNames.map(name => <label key={name} className="flex items-center gap-2 px-3 py-2 text-sm text-slate-700"><input type="checkbox" checked={templateItems.includes(name)} onChange={event => setTemplateItems(current => event.target.checked ? [...current, name] : current.filter(selected => selected !== name))} /><span className="flex-1 truncate">{name}</span></label>) : <p className="px-3 py-4 text-sm text-slate-500">Nenhum item encontrado.</p>}
+            </div>
+          </fieldset>
           <div className="flex gap-2"><button type="submit" disabled={!templateName.trim() || !templateItems.length} className="flex-1 rounded-xl bg-emerald-600 disabled:bg-slate-300 text-white py-2.5 text-sm font-bold">{editingTemplateId ? 'Salvar alterações' : 'Cadastrar modelo'}</button>{editingTemplateId && <button type="button" onClick={resetTemplateEditor} className="rounded-xl border border-slate-300 px-3 text-sm font-semibold text-slate-600">Cancelar</button>}</div>
         </form>
-        <div className="bg-white border border-slate-200 rounded-2xl p-4"><h2 className="font-extrabold text-slate-900 mb-3">Modelos disponíveis</h2><div className="max-h-[60vh] space-y-2 overflow-y-auto">{templates.length ? templates.map(template => <div key={template.id} className="flex items-center gap-2 rounded-xl border border-slate-100 p-3"><span className="text-xl">{template.emoji}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-slate-800">{template.name}</p><p className="text-xs text-slate-500">{template.items.length} itens · {template.description}</p></div><div className="flex shrink-0 items-center gap-1"><button type="button" onClick={() => editTemplate(template)} className="rounded-lg px-2 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-50">Editar</button><button type="button" onClick={() => setTemplateToDelete(template)} aria-label={`Excluir ${template.name}`} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-50"><Trash2 size={14} />Excluir</button></div></div>) : <p className="py-4 text-sm text-slate-500">Nenhum modelo cadastrado.</p>}</div></div>
-      </div>{templateToDelete && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={() => setTemplateToDelete(null)}><div role="dialog" aria-modal="true" aria-labelledby="delete-template-title" onClick={event => event.stopPropagation()} className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 shadow-xl"><h2 id="delete-template-title" className="font-extrabold text-slate-900">Excluir modelo de lista?</h2><p className="mt-2 text-sm text-slate-600">O modelo <strong>{templateToDelete.name}</strong> deixará de aparecer na tela inicial. Listas já criadas com ele serão mantidas.</p><div className="mt-5 flex gap-2"><button type="button" onClick={() => setTemplateToDelete(null)} className="flex-1 rounded-xl border border-slate-300 px-3 py-2.5 text-sm font-bold text-slate-700">Cancelar</button><button type="button" onClick={() => removeTemplate(templateToDelete)} className="flex-1 rounded-xl bg-rose-600 px-3 py-2.5 text-sm font-bold text-white hover:bg-rose-700">Excluir</button></div></div></div>}</> : <div className="bg-white border border-slate-200 rounded-2xl p-4 max-w-xl space-y-5">
+        <div className="app-panel-results bg-white border border-slate-200 rounded-2xl p-4"><h2 className="font-extrabold text-slate-900 mb-3">Modelos disponíveis</h2><div className="app-panel-scroll max-h-[60vh] space-y-2 overflow-y-auto">{templates.length ? templates.map(template => <div key={template.id} className="flex items-center gap-2 rounded-xl border border-slate-100 p-3"><span className="text-xl">{template.emoji}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-slate-800">{template.name}</p><p className="text-xs text-slate-500">{template.items.length} itens · {template.description}</p></div><div className="flex shrink-0 items-center gap-1"><button type="button" onClick={() => editTemplate(template)} className="rounded-lg px-2 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-50">Editar</button><button type="button" onClick={() => setTemplateToDelete(template)} aria-label={`Excluir ${template.name}`} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-50"><Trash2 size={14} />Excluir</button></div></div>) : <p className="py-4 text-sm text-slate-500">Nenhum modelo cadastrado.</p>}</div></div>
+      </div>{templateToDelete && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={() => setTemplateToDelete(null)}><div role="dialog" aria-modal="true" aria-labelledby="delete-template-title" onClick={event => event.stopPropagation()} className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 shadow-xl"><h2 id="delete-template-title" className="font-extrabold text-slate-900">Excluir modelo de lista?</h2><p className="mt-2 text-sm text-slate-600">O modelo <strong>{templateToDelete.name}</strong> deixará de aparecer na tela inicial. Listas já criadas com ele serão mantidas.</p><div className="mt-5 flex gap-2"><button type="button" onClick={() => setTemplateToDelete(null)} className="flex-1 rounded-xl border border-slate-300 px-3 py-2.5 text-sm font-bold text-slate-700">Cancelar</button><button type="button" onClick={() => removeTemplate(templateToDelete)} className="flex-1 rounded-xl bg-rose-600 px-3 py-2.5 text-sm font-bold text-white hover:bg-rose-700">Excluir</button></div></div></div>}</> : <div className="bg-white border border-slate-200 rounded-2xl p-4 max-w-xl md:max-w-none space-y-5">
         <div><h2 className="font-extrabold text-slate-900">Tema do aplicativo</h2><p className="text-xs text-slate-500 mt-1">Escolha como o aplicativo aparece neste dispositivo.</p></div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">{([['light', 'Claro', Sun], ['dark', 'Escuro', Moon], ['black', 'Preto', Circle], ['system', 'Sistema', Palette]] as const).map(([mode, label, Icon]) => <button key={mode} type="button" onClick={() => updateTheme(mode)} className={`rounded-xl border p-3 flex flex-col items-center gap-1 text-xs font-bold ${theme.mode === mode ? 'border-emerald-500 bg-emerald-50 text-emerald-900' : 'border-slate-200 text-slate-600'}`}><Icon size={18} fill={mode === 'black' ? 'currentColor' : 'none'} />{label}</button>)}</div>
-        <div className="grid grid-cols-2 gap-3">
-          <label className="block text-xs font-bold text-slate-700">Cor principal<div className="mt-2"><input type="color" value={theme.primaryColor} onChange={event => updateTheme(theme.mode, event.target.value)} className="h-11 w-14 cursor-pointer rounded-lg" /></div></label>
-          <label className="block text-xs font-bold text-slate-700">Cor da viagem<div className="mt-2"><input type="color" value={theme.travelColor} onChange={event => updateTheme(theme.mode, theme.primaryColor, theme.showImages, event.target.value)} className="h-11 w-14 cursor-pointer rounded-lg" /></div></label>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <ColorPicker value={theme.primaryColor} onChange={color => updateTheme(theme.mode, color)} />
+          <ColorPicker title="Cor da viagem" value={theme.travelColor} onChange={color => updateTheme(theme.mode, theme.primaryColor, theme.showImages, color)} />
         </div>
         <div className="flex items-center justify-between gap-4 rounded-xl border border-slate-200 px-3.5 py-3"><div className="flex items-center gap-3"><span className={`flex h-9 w-9 items-center justify-center rounded-lg ${theme.showImages ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{theme.showImages ? <Eye size={18} /> : <EyeOff size={18} />}</span><div><p className="text-sm font-bold text-slate-800">Exibir imagens dos itens</p><p className="text-xs text-slate-500">{theme.showImages ? 'Fotos visíveis nas listas.' : 'Fotos ocultas nas listas.'}</p></div></div><button type="button" role="switch" aria-checked={theme.showImages} onClick={() => updateTheme(theme.mode, theme.primaryColor, !theme.showImages)} className={`relative h-6 w-11 shrink-0 overflow-hidden rounded-full p-1 transition-colors ${theme.showImages ? 'bg-emerald-600' : 'bg-slate-300'}`}><span className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${theme.showImages ? 'translate-x-5' : 'translate-x-0'}`} /></button></div>
       </div>}</>}

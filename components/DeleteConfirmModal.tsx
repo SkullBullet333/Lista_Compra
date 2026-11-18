@@ -1,5 +1,7 @@
 'use client';
 
+import { usePageScrollLock } from '@/hooks/use-page-scroll-lock';
+
 import React from 'react';
 import { AlertTriangle, Trash2, X } from 'lucide-react';
 import { ListType } from '@/types/grocery';
@@ -21,6 +23,7 @@ export function DeleteConfirmModal({
   itemCount = 0,
   listType = 'market',
 }: DeleteConfirmModalProps) {
+  usePageScrollLock(isOpen, onClose);
   if (!isOpen) return null;
 
   return (
@@ -29,7 +32,7 @@ export function DeleteConfirmModal({
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-2xl max-w-sm w-full overflow-hidden shadow-2xl border border-slate-200"
+        className="bg-white rounded-2xl max-w-sm w-full overflow-hidden md:max-h-[90dvh] md:overflow-y-auto md:overscroll-contain shadow-2xl border border-slate-200"
         onClick={e => e.stopPropagation()}
       >
         <div className="p-5 text-center">
