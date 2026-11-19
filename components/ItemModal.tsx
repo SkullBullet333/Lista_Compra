@@ -200,7 +200,7 @@ function ItemModalForm({
           <div className="bg-white p-3.5 sm:p-2.5 rounded-2xl border border-slate-200/90 shadow-2xs space-y-2">
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                Nome do Item <span className="text-rose-500">*</span>
+                Nome do Item <span className="text-red-500">*</span>
               </label>
               {autoMatchedSource && (
                 <span className="text-[11px] font-bold text-emerald-700 flex items-center gap-1">
@@ -405,16 +405,13 @@ function ItemModalForm({
             </div>
           </div>
 
-          {/* Card: Imagem do Produto (Opcional) */}
+          {/* Card: Imagem do Produto */}
           <div className="bg-white p-3.5 sm:p-2.5 rounded-2xl border border-slate-200/90 shadow-2xs space-y-2.5">
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
                 <ImageIcon size={14} className="text-emerald-700" />
                 <span>Foto do Produto</span>
               </label>
-              <span className="text-[10px] text-slate-500 font-semibold bg-slate-100 px-2 py-0.5 rounded-full">
-                Opcional
-              </span>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
@@ -494,7 +491,7 @@ function ItemModalForm({
           {/* Card: Observações / Marca */}
           <div className="bg-white p-3.5 sm:p-2.5 rounded-2xl border border-slate-200/90 shadow-2xs space-y-1.5">
             <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-              Observações / Marca Preferida (Opcional)
+              Observações / Marca Preferida
             </label>
             <input
               type="text"

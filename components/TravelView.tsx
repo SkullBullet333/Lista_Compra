@@ -192,15 +192,12 @@ export function TravelView({ list, onUpdateList }: TravelViewProps) {
   };
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-5 pb-28">
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-5 pb-[calc(11rem+env(safe-area-inset-bottom,0px))] md:pb-48">
       <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
         <div>
           <p className="travel-accent-text text-xs font-bold uppercase tracking-wider">Roteiro de viagem</p>
           {list.destination && <p className="text-sm text-slate-600 flex items-center gap-1 mt-1"><MapPin size={14} />{list.destination}</p>}
         </div>
-        <button type="button" onClick={() => { resetEditor(); setIsEditorOpen(true); }} className="travel-accent-bg flex items-center gap-2 rounded-xl hover:opacity-90 text-white px-4 py-2.5 text-sm font-bold">
-          <Plus size={17} /> Novo
-        </button>
       </div>
 
       <div className="grid grid-cols-2 gap-3 mb-6">
@@ -230,12 +227,23 @@ export function TravelView({ list, onUpdateList }: TravelViewProps) {
         </section>
       ))}
 
+      <button
+        type="button"
+        onClick={() => { resetEditor(); setIsEditorOpen(true); }}
+        className="travel-accent-bg fixed bottom-[calc(6rem+env(safe-area-inset-bottom,0px))] md:bottom-28 right-4 sm:right-6 z-40 hover:opacity-90 active:scale-95 text-white font-extrabold text-sm sm:text-base h-14 w-14 p-0 md:h-auto md:w-auto md:px-6 md:py-3.5 rounded-full shadow-lg border-0 flex items-center justify-center md:gap-2 transition-all cursor-pointer select-none"
+        title="Adicionar atividade à viagem"
+        aria-label="Adicionar atividade à viagem"
+      >
+        <Plus size={20} strokeWidth={2.8} className="h-6 w-6 md:h-5 md:w-5" />
+        <span className="hidden md:inline">Novo</span>
+      </button>
+
       {isEditorOpen && <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-end sm:items-center sm:justify-center" onClick={resetEditor}>
         <div className="bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl p-5 max-h-[90dvh] overflow-y-auto" onClick={event => event.stopPropagation()}>
           <div className="flex items-center justify-between mb-4"><h2 className="font-extrabold text-slate-900">{editingId ? 'Editar atividade' : 'Adicionar atividade'}</h2><button type="button" onClick={resetEditor} aria-label="Fechar" className="text-slate-500"><X size={20} /></button></div>
           <form onSubmit={saveEntry} className="space-y-3">
-            <label className="block text-xs font-bold text-slate-700">Nome *<input required autoFocus value={title} onChange={event => setTitle(event.target.value)} placeholder="Ex: Visitar museu, almoço, táxi" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label>
-            <div className="grid grid-cols-2 gap-3"><label className="block text-xs font-bold text-slate-700">Data *<input required type="date" value={date} onChange={event => setDate(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-2 py-2.5 text-sm text-slate-900" /></label><label className="block text-xs font-bold text-slate-700">Horário (opcional)<input type="time" value={time} onChange={event => setTime(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-2 py-2.5 text-sm text-slate-900" /></label></div>
+            <label className="block text-xs font-bold text-slate-700">Nome <span className="text-red-500">*</span><input required autoFocus value={title} onChange={event => setTitle(event.target.value)} placeholder="Ex: Visitar museu, almoço, táxi" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label>
+            <div className="grid grid-cols-2 gap-3"><label className="block text-xs font-bold text-slate-700">Data <span className="text-red-500">*</span><input required type="date" value={date} onChange={event => setDate(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-2 py-2.5 text-sm text-slate-900" /></label><label className="block text-xs font-bold text-slate-700">Horário<input type="time" value={time} onChange={event => setTime(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-2 py-2.5 text-sm text-slate-900" /></label></div>
             <label className="block text-xs font-bold text-slate-700">Tipo<select value={type} onChange={event => setType(event.target.value as TravelEntryType)} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900">{(Object.keys(ENTRY_TYPES) as TravelEntryType[]).map(key => <option key={key} value={key}>{ENTRY_TYPES[key]}</option>)}</select></label>
             <label className="block text-xs font-bold text-slate-700">Valor (R$)<input inputMode="decimal" value={amount} onChange={event => setAmount(event.target.value.replace(/[^0-9,.]/g, ''))} placeholder="0,00" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label>
             <label className="block text-xs font-bold text-slate-700">Anotação<input value={notes} onChange={event => setNotes(event.target.value)} placeholder="Endereço, reserva ou detalhes" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900" /></label>

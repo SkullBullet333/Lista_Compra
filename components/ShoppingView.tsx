@@ -16,6 +16,7 @@ import { ShoppingList, GroceryItem, CategoryId } from '@/types/grocery';
 import { useCategories } from '@/hooks/use-categories';
 import { calculateListTotals, formatCurrency } from '@/lib/storage';
 import { ItemRow } from './ItemRow';
+import { CategoryDragProvider, CategoryDragPanel, CategoryDropZone } from './CategoryDrag';
 import { ProductPicker } from './ProductPicker';
 import { StatsView } from './StatsView';
 import { useOutsideDismiss } from '@/hooks/use-outside-dismiss';
@@ -200,6 +201,10 @@ export function ShoppingView({
   }
 
   return (
+    <CategoryDragProvider categories={categories} disabled={list.accessRole === 'viewer'} onMove={(id, category) => {
+      if (list.accessRole === 'viewer' || !list.items.some(item => item.id === id)) return;
+      onUpdateList({ ...list, items: list.items.map(item => item.id === id ? { ...item, category } : item), updatedAt: Date.now() });
+    }}>
     <div className="pb-[calc(11rem+env(safe-area-inset-bottom,0px))] md:pb-48">
       <div className="w-full bg-slate-200 h-1.5 overflow-hidden">
         <div className="bg-emerald-500 h-full transition-all duration-300 ease-out" style={{ width: `${totals.percentDone}%` }} />
@@ -246,7 +251,7 @@ export function ShoppingView({
                 type="button"
                 onClick={onOpenSummary}
                 aria-pressed={isSummary}
-                className={`px-2 sm:px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors flex md:hidden items-center gap-1 ${isSummary ? 'bg-white text-emerald-800 shadow-xs' : 'text-slate-600 hover:text-slate-900 hover:bg-white'}`}
+                className={`px-2 sm:px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 ${isSummary ? 'bg-white text-emerald-800 shadow-xs' : 'text-slate-600 hover:text-slate-900 hover:bg-white'}`}
                 title="Ver resumo da lista"
               >
                 <Sparkles size={13} />
@@ -385,8 +390,9 @@ export function ShoppingView({
           /* MODO DE LISTA POR CATEGORIAS (Requisito "ajuste a categoria para ficar em modo de lista") */
           <div className="space-y-4">
             {categoryGroups.map(group => (
-              <div
+              <CategoryDropZone
                 key={group.key}
+                category={group.key}
                 className="bg-white rounded-2xl border border-slate-200/80 p-3 sm:p-4 shadow-xs space-y-2.5"
               >
                 {/* Cabeçalho da Categoria em Lista */}
@@ -425,7 +431,7 @@ export function ShoppingView({
                     />
                   ))}
                 </div>
-              </div>
+              </CategoryDropZone>
             ))}
           </div>
         ) : (
@@ -498,6 +504,7 @@ export function ShoppingView({
             )}
           </div>
         )}
+        <CategoryDragPanel />
       </div>
 
       {/* Botão Flutuante (FAB) "Adicionar" sobre a lista na parte inferior direito */}
@@ -537,5 +544,6 @@ export function ShoppingView({
       </div>
 
     </div>
+    </CategoryDragProvider>
   );
 }

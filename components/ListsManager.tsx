@@ -131,10 +131,7 @@ export function ListsManager({
                     <h2 className="text-base font-extrabold text-slate-900 truncate">
                       {list.title}
                     </h2>
-                    <div className="flex flex-wrap items-center gap-2 mt-1">
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${isTravel ? 'travel-accent-surface' : 'bg-emerald-50 text-emerald-800'}`}>{isTravel ? 'Viagem' : 'Mercado'}</span>
-                      {list.accessRole && list.accessRole !== 'owner' && <span className="text-[10px] font-extrabold bg-sky-100 text-sky-800 px-2 py-0.5 rounded-full shrink-0">Compartilhada · {list.accessRole === 'editor' ? 'edição' : 'leitura'}</span>}
-                    </div>
+                    {list.accessRole && list.accessRole !== 'owner' && <span className="mt-1 inline-flex text-[10px] font-extrabold bg-sky-100 text-sky-800 px-2 py-0.5 rounded-full shrink-0">Compartilhada · {list.accessRole === 'editor' ? 'edição' : 'leitura'}</span>}
 
                     {(isTravel ? list.destination : list.marketName) && (
                       <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-0.5 truncate">
@@ -236,7 +233,7 @@ export function ListsManager({
             <form onSubmit={handleCreateSubmit} className="p-5 space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  {newType === 'travel' ? 'Nome da Viagem' : 'Título da Lista'} <span className="text-rose-500">*</span>
+                  {newType === 'travel' ? 'Nome da Viagem' : 'Título da Lista'} <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
@@ -251,7 +248,7 @@ export function ListsManager({
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  {newType === 'travel' ? 'Destino (opcional)' : 'Mercado / Local (Opcional)'}
+                  {newType === 'travel' ? 'Destino' : 'Mercado / Local'}
                 </label>
                 <input
                   type="text"
@@ -264,7 +261,7 @@ export function ListsManager({
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Orçamento (opcional)
+                  Orçamento
                 </label>
                 <input
                   type="text"

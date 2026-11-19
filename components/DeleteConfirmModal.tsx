@@ -3,7 +3,7 @@
 import { usePageScrollLock } from '@/hooks/use-page-scroll-lock';
 
 import React from 'react';
-import { AlertTriangle, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Trash2 } from 'lucide-react';
 import { ListType } from '@/types/grocery';
 
 interface DeleteConfirmModalProps {
@@ -19,8 +19,6 @@ export function DeleteConfirmModal({
   isOpen,
   onClose,
   onConfirm,
-  title,
-  itemCount = 0,
   listType = 'market',
 }: DeleteConfirmModalProps) {
   usePageScrollLock(isOpen, onClose);
@@ -41,16 +39,17 @@ export function DeleteConfirmModal({
           </div>
 
           <h3 className="text-base font-extrabold text-slate-900">
-            {listType === 'travel' ? 'Excluir viagem?' : 'Excluir lista de compras?'}
+            Mover para a lixeira?
           </h3>
 
           <p className="text-xs text-slate-500 mt-1 mb-2">
-            Tem certeza que deseja apagar a lista <strong>&quot;{title}&quot;</strong>
-            {itemCount > 0 ? ` com ${itemCount} ${listType === 'travel' ? (itemCount === 1 ? 'atividade' : 'atividades') : (itemCount === 1 ? 'item' : 'itens')}` : ''}?
+            Tem certeza que deseja apagar a lista?
           </p>
 
           <p className="text-[11px] text-rose-600 font-semibold bg-rose-50 p-2 rounded-lg border border-rose-100">
-            Esta ação é irreversível e {listType === 'travel' ? 'as atividades serão excluídas' : 'os itens serão excluídos'}.
+            {listType === 'travel'
+              ? 'A viagem e suas atividades serão movidas para a lixeira e poderão ser recuperadas.'
+              : 'A lista e seus itens serão movidos para a lixeira e poderão ser recuperados.'}
           </p>
 
           <div className="grid grid-cols-2 gap-2 mt-4 pt-2 border-t border-slate-100">
@@ -71,7 +70,7 @@ export function DeleteConfirmModal({
               className="py-2.5 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-95 text-xs font-bold text-white shadow-xs transition-all flex items-center justify-center gap-1.5"
             >
               <Trash2 size={14} />
-              <span>Sim, Excluir</span>
+              <span>Sim, mover</span>
             </button>
           </div>
         </div>

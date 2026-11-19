@@ -49,6 +49,15 @@ import { CATALOG_PRESETS } from '@/lib/catalog';
 
 const emptySubscribe = () => () => {};
 
+const SETTINGS_TITLES: Record<SettingsSection, string> = {
+  home: 'Configurações',
+  categories: 'Categorias',
+  items: 'Itens cadastrados',
+  templates: 'Modelos de lista',
+  appearance: 'Aparência',
+  trash: 'Lixeira',
+};
+
 function useIsMounted() {
   return React.useSyncExternalStore(
     emptySubscribe,
@@ -248,11 +257,14 @@ function ShoppingApp() {
     const handleOffline = () => setSyncNotice('Modo offline: alterações salvas neste aparelho.');
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+    const handleTrashRestore = () => { void applyRemote(); };
+    window.addEventListener('trash-restored', handleTrashRestore);
     void initialize();
     return () => {
       active = false;
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('trash-restored', handleTrashRestore);
       unsubscribeRealtime();
     };
   }, [session]);
@@ -730,7 +742,7 @@ function ShoppingApp() {
       {/* Top Navbar */}
       <Navbar
         activeTab={activeTab}
-        onSelectTab={handleSelectTab}
+        settingsTitle={SETTINGS_TITLES[settingsSection]}
         onBackFromList={() => {
           if (isProductPickerOpen) {
             setIsProductPickerOpen(false);
@@ -739,12 +751,6 @@ function ShoppingApp() {
             setListTypeFilter(activeList.type || 'market');
             handleSelectTab('lists');
           }
-        }}
-        onNewList={() => {
-          closePopups();
-          setActiveTab('lists');
-          setIsNewListModalOpen(true);
-          window.history.pushState({ modal: 'newList' }, '');
         }}
         onOpenSettings={() => {
           setSettingsSection('home');
@@ -759,7 +765,6 @@ function ShoppingApp() {
         }}
         listTitle={activeList?.title}
         listType={activeTab === 'lists' ? listTypeFilter : activeList.type || 'market'}
-        itemCount={activeList.type === 'travel' ? (activeList.travelEntries?.length || 0) : (activeList.items?.length || 0)}
         onOpenListEdit={() => {
           setIsListEditModalOpen(true);
           if (typeof window !== 'undefined') {

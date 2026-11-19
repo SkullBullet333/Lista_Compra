@@ -49,6 +49,29 @@ Listas podem ser compartilhadas por e-mail com permissão de edição ou somente
 
 ## Tabelas
 
+### Log de exclusões e lixeira recuperável
+
+As migrations `20261119010456_group_list_trash_and_item_origin.sql` e `20261119011030_stable_template_trash_and_restore_scope.sql` agrupam a exclusão de listas/modelos completos em uma entrada recuperável, preservando seus filhos no snapshot e os eventos no log. Itens removidos individualmente ficam separados e registram o nome/tipo da lista de origem. Cópias antigas de cascata usam `parent_trash_id`; reposições internas de itens de modelos com conteúdo idêntico ao de um registro ativo recebem `superseded_at`. Nenhum desses ajustes apaga o histórico. A restauração da lista não marca como restaurado um item excluído individualmente que não constava em seu snapshot.
+
+O backup do cliente sincroniza itens de modelos por upsert com IDs estáveis, pagina a leitura dos itens existentes e só exclui IDs ausentes na versão desejada. Novos itens recebem UUID determinístico por modelo/nome/ocorrência para evitar multiplicação entre dispositivos. Testes: `node scripts/test-template-sync.cjs`, `supabase/tests/group_list_trash.sql` e `supabase/tests/template_trash.sql`. Os testes de banco usam apenas dados sintéticos e rollback.
+
+**Esvaziar lixeira:** a migration `20261119003915_empty_trash_preserve_audit.sql` adiciona a limpeza definitiva pela tela, com prévia da quantidade e confirmação. `preview_empty_trash()` obtém a contagem e o horário do servidor; `empty_trash(timestamptz)` limpa apenas registros pendentes da própria conta até esse horário, em todas as páginas. Um editor não pode apagar as cópias de recuperação de outro proprietário. Conteúdo e dados vinculados são removidos dos snapshots, os metadados recebem `purged_at`/`purged_by` e o log registra `purge`. Registros limpos não aparecem na lixeira nem podem ser restaurados. Registros restaurados e novas exclusões após a prévia são preservados. O teste `supabase/tests/empty_trash.sql` valida a limpeza com snapshots sintéticos e rollback, sem esvaziar a lixeira real.
+
+A migration `20261119001508_deletion_audit_and_recoverable_trash.sql` foi aplicada no projeto remoto e protege as exclusões futuras. Ela não recupera nem importa exclusões anteriores. A tela **Configurações > Lixeira** permite restaurar os registros arquivados. Em novos ambientes, aplique essa migration para ativar a proteção.
+
+- `deletion_logs`: histórico de exclusões físicas, ocultações (`is_deleted`) e restaurações. Registra a chave original, autor autenticado quando disponível, dono, data, transação, papel do banco e contexto limitado da requisição. Tokens e chaves de API não são gravados. Cabeçalhos identificam a origem apenas para diagnóstico, nunca para autorizar ações.
+- `trash_bin`: cópia JSON completa do registro excluído e dos dados vinculados. Sem expiração ou limpeza automática. A exclusão e seu arquivamento fazem parte da mesma transação: se o arquivamento falhar, a exclusão não é concluída.
+- As 14 tabelas atuais do aplicativo são monitoradas: listas, itens, roteiros, categorias, catálogo, modelos, itens de modelos, preços, perfis, preferências, participantes, convites, configuração do catálogo e arquivo pessoal do catálogo. Novas tabelas precisam receber os gatilhos em uma nova migration.
+- `TRUNCATE` é bloqueado nessas tabelas, pois não dispara gatilhos de exclusão por linha. Operações de manutenção devem usar `DELETE` para manter a cópia e o histórico.
+- Clientes podem consultar apenas os registros permitidos por RLS e não podem inserir, editar ou remover diretamente as tabelas de auditoria. Operações administrativas sem sessão autenticada ficam com autor nulo e papel do banco registrado.
+- `restore_trash_item(uuid)` verifica permissões atuais, restaura de forma atômica, registra o evento e rejeita conflitos sem sobrescrever dados. Listas e modelos recuperam os itens junto. Participantes e convites ficam preservados para consulta, mas só podem ser restaurados individualmente pelo proprietário; restaurar uma lista não reativa compartilhamentos.
+- A restauração administrativa de `catalog_mode` e `catalog_items_personal_archive` não é exposta no aplicativo. As outras 12 tabelas podem aparecer na lixeira da conta conforme suas permissões.
+- Exclusões offline de registros que já existem no banco são arquivadas quando a sincronização for concluída. Dados criados e apagados apenas localmente, antes de qualquer envio, não chegam aos gatilhos do banco. A tela de lixeira exige conexão.
+
+O teste transacional `supabase/tests/deletion_audit.sql` cria somente registros sintéticos associados a duas contas de teste e executa `ROLLBACK` ao final. Execute o arquivo completo em um banco de teste depois de aplicar a migration. Ele verifica exclusão, restauração, conteúdo vinculado, conflitos, chaves compostas, RLS, idempotência, metadados e ausência de segredos nos logs.
+
+Validação local do cliente: `node scripts/test-trash.cjs`. A migration foi aplicada e os testes transacionais do banco passaram, sem persistir os dados sintéticos. A conferência confirmou 14 tabelas monitoradas, RLS nas duas tabelas de auditoria e nenhum alerta de segurança novo relacionado a esta alteração.
+
 - `catalog_items`: catálogo único, editável por contas autenticadas no modo compartilhado.
 - `catalog_mode`: chave do banco que permite desativar a edição compartilhada futuramente.
 - `catalog_items_personal_archive`: cópia privada dos itens personalizados antes da consolidação.

@@ -119,7 +119,7 @@ function ListEditModalForm({
           {/* Nome da Lista */}
           <div>
             <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-              Nome da Lista <span className="text-rose-500">*</span>
+              Nome da Lista <span className="text-red-500">*</span>
             </label>
             <input
               type="text"
@@ -165,7 +165,7 @@ function ListEditModalForm({
                   const cleaned = e.target.value.replace(/[^0-9,.]/g, '');
                   setBudgetStr(cleaned);
                 }}
-                placeholder="Ex: 250,00 (opcional)"
+                placeholder="Ex: 250,00"
                 className="w-full pl-9 pr-3.5 py-2.5 rounded-xl border border-slate-300 text-slate-900 text-sm font-bold tabular-nums focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600"
               />
             </div>

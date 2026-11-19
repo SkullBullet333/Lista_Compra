@@ -144,6 +144,20 @@ body { transition: background-color 160ms ease, color 160ms ease; }
   * { scrollbar-width: auto; scrollbar-color: auto; }
 }
 
+/* Mobile keeps touch scrolling without visible tracks or reserved scrollbar space. */
+@media (max-width: 767.98px) {
+  * {
+    scrollbar-width: none !important;
+    scrollbar-gutter: auto !important;
+    -ms-overflow-style: none;
+  }
+  *::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+}
+
 .shopping-totals-bar {
   background-color: var(--theme-surface);
   box-shadow: 0 -4px 16px var(--theme-shadow);
@@ -155,6 +169,7 @@ body { transition: background-color 160ms ease, color 160ms ease; }
 [class~="text-emerald-700"], [class~="text-emerald-800"] { color: var(--primary-text) !important; }
 [class*="ring-emerald-500"] { --tw-ring-color: color-mix(in srgb, var(--app-primary) 35%, transparent) !important; }
 
+.market-accent-bg { background-color: var(--app-market-color) !important; color: var(--market-foreground) !important; }
 .travel-accent-bg { background-color: var(--app-travel-color) !important; color: var(--travel-foreground) !important; }
 .travel-accent-text { color: var(--travel-text) !important; }
 .travel-accent-border { border-color: var(--app-travel-color) !important; }

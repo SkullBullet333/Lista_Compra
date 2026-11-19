@@ -26,14 +26,15 @@ function runtime(shared, state = { local: new Map(), catalog: [], writes: [], up
       getPublicUrl: object => ({ data: { publicUrl: `https://storage.test/${object}` } }),
     }) },
     from(table) {
-      let operation = 'select', payload, single = false;
+      let operation = 'select', payload, single = false, first = 0, last = Infinity;
       const filters = [];
       const builder = {
         select() { return builder; },
         order() { return builder; },
         eq(key, value) { filters.push(row => row[key] === value); return builder; },
         is(key, value) { return builder.eq(key, value); },
-        in() { return builder; },
+        in(key, values) { filters.push(row => values.includes(row[key])); return builder; },
+        range(start, end) { first = start; last = end; return builder; },
         upsert(value) { operation = 'upsert'; payload = value; return builder; },
         insert(value) { operation = 'insert'; payload = value; return builder; },
         update(value) { operation = 'update'; payload = value; return builder; },
@@ -59,6 +60,20 @@ function runtime(shared, state = { local: new Map(), catalog: [], writes: [], up
             if (table === 'shopping_lists' && operation === 'select' && state.remoteLists) {
               const rows = state.remoteLists.filter(row => filters.every(filter => filter(row)));
               return { data: single ? rows[0] || null : rows, error: null };
+            }
+            if (table === 'template_items') {
+              state.templateItems ||= [];
+              const matching = row => filters.every(filter => filter(row));
+              if (operation === 'select') return { data: state.templateItems.filter(matching).slice(first, last + 1), error: null };
+              if (operation === 'upsert') for (const row of payload) {
+                const existing = state.templateItems.find(item => item.id === row.id);
+                if (existing) Object.assign(existing, row);
+                else state.templateItems.push({ ...row });
+              }
+              if (operation === 'delete') {
+                (state.templateDeletes ||= []).push(...state.templateItems.filter(matching));
+                state.templateItems = state.templateItems.filter(row => !matching(row));
+              }
             }
             if (table === 'categories') {
               state.categories ||= [];
@@ -90,7 +105,7 @@ function runtime(shared, state = { local: new Map(), catalog: [], writes: [], up
     '@supabase/supabase-js': { createClient: () => client },
     '@/lib/catalog-mode': { SHARED_CATALOG_EDIT: shared },
     '@/lib/preferences': { getThemePreferences: () => ({ mode: 'light', primaryColor: '#059669' }), hasSavedTheme: () => true },
-    '@/lib/templates': { getStoredTemplateOverrides: () => [], getDeletedTemplateIds: () => [] },
+    '@/lib/templates': { getStoredTemplateOverrides: () => state.templates || [], getDeletedTemplateIds: () => state.deletedTemplateIds || [] },
   };
   const modules = new Map();
   const window = new EventTarget();

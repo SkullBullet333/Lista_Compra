@@ -5,6 +5,7 @@ import { Check, Trash2, Edit3, Plus, Minus, TrendingDown, TrendingUp } from 'luc
 import { GroceryItem } from '@/types/grocery';
 import { formatCurrency } from '@/lib/storage';
 import { ItemImage } from './ItemImage';
+import { CategoryDragItem } from './CategoryDrag';
 
 interface ItemRowProps {
   item: GroceryItem;
@@ -112,7 +113,7 @@ export function ItemRow({
         <Trash2 size={15} />
         <span>Excluir</span>
       </button>
-      <div
+      <CategoryDragItem item={item}
         onClick={event => {
           if (!window.matchMedia('(min-width: 640px)').matches) return;
           if ((event.target as HTMLElement).closest('button, input, [data-item-action]')) return;
@@ -343,7 +344,7 @@ export function ItemRow({
           <Trash2 size={14} />
         </button>
       </div>
-      </div>
+      </CategoryDragItem>
     </div>
   );
 }

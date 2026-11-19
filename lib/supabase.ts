@@ -68,6 +68,17 @@ function createOwnedListId(userId: string): string {
   return `${userId}-list-${createClientId()}`;
 }
 
+async function templateItemId(templateId: string, name: string, occurrence: number): Promise<string> {
+  // A new item gets the same UUID on every device, so concurrent first backups
+  // upsert the same row instead of multiplying the template contents.
+  const input = new TextEncoder().encode(JSON.stringify(['template-item', templateId, name, occurrence]));
+  const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', input)).slice(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x80; // UUID version 8, application-defined hash.
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 function repairLocalListIds(list: ShoppingList, userId: string): void {
   const previousListId = list.id;
   list.id = createOwnedListId(userId);
@@ -608,11 +619,35 @@ export async function backupAppData(lists: ShoppingList[]): Promise<boolean> {
     const templateId = `${user.id}:${template.id}`;
     const { error: templateError } = await supabase.from('list_templates').upsert({ id: templateId, user_id: user.id, name: template.name, description: template.description, emoji: template.emoji, market_name: template.marketName || null, target_budget: template.targetBudget ?? null, is_system: false, is_deleted: false });
     ensureSyncSucceeded(`Não foi possível salvar o modelo "${template.name}"`, templateError);
-    const { error: deleteTemplateItemsError } = await supabase.from('template_items').delete().eq('template_id', templateId).eq('user_id', user.id);
-    ensureSyncSucceeded(`Não foi possível atualizar os itens do modelo "${template.name}"`, deleteTemplateItemsError);
-    if (template.items.length) {
-      const { error: templateItemsError } = await supabase.from('template_items').insert(template.items.map((item, position) => ({ template_id: templateId, user_id: user.id, name: item.name, category_id: item.category, quantity: item.quantity, unit: item.unit, default_price: item.price, image_url: remoteImageUrl(item.imageUrl), notes: item.notes || null, position })));
-      ensureSyncSucceeded(`Não foi possível salvar os itens do modelo "${template.name}"`, templateItemsError);
+    // Reuse row IDs instead of deleting/recreating every item on each backup.
+    const existing: Array<{ id: string; name: string }> = [];
+    for (let offset = 0; ; offset += 500) {
+      const { data, error } = await supabase.from('template_items').select('id,name')
+        .eq('template_id', templateId).eq('user_id', user.id).order('position').order('id').range(offset, offset + 499);
+      ensureSyncSucceeded(`Não foi possível conferir os itens do modelo "${template.name}"`, error);
+      existing.push(...(data || []));
+      if (!data || data.length < 500) break;
+    }
+    const remaining = [...existing];
+    const occurrences = new Map<string, number>();
+    const desired = await Promise.all(template.items.map(async (item, position) => {
+      const normalizedName = item.name.trim().toLocaleLowerCase('pt-BR');
+      const occurrence = occurrences.get(normalizedName) || 0;
+      occurrences.set(normalizedName, occurrence + 1);
+      const index = remaining.findIndex(row => row.name.trim().toLocaleLowerCase('pt-BR') === normalizedName);
+      const original = index >= 0 ? remaining.splice(index, 1)[0] : undefined;
+      return { id: original?.id || await templateItemId(templateId, normalizedName, occurrence), template_id: templateId, user_id: user.id,
+        name: item.name, category_id: item.category, quantity: item.quantity, unit: item.unit,
+        default_price: item.price, image_url: remoteImageUrl(item.imageUrl), notes: item.notes || null, position };
+    }));
+    if (desired.length) {
+      const { error } = await supabase.from('template_items').upsert(desired);
+      ensureSyncSucceeded(`Não foi possível salvar os itens do modelo "${template.name}"`, error);
+    }
+    if (remaining.length) {
+      const { error } = await supabase.from('template_items').delete().in('id', remaining.map(item => item.id))
+        .eq('template_id', templateId).eq('user_id', user.id);
+      ensureSyncSucceeded(`Não foi possível remover itens do modelo "${template.name}"`, error);
     }
   }
   for (const id of deletedTemplateIds) {
